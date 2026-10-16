@@ -39,10 +39,10 @@ are intentionally simpler; new resource APIs must converge on these standards.
 ai-grid-provider-backend/
 ├── cmd/ai-grid-provider-backend/   # Service entrypoint
 ├── client/                         # Reusable gRPC client
-├── proto/                          # Protobuf source + buf config
+├── proto/ai_grid/v1/               # Per-resource *_type.proto / *_service.proto + metadata
 ├── gen/ai_grid/v1/                 # Generated Go + gateway stubs (committed)
 ├── docs/openapi/                   # Generated OpenAPI (Swagger 2.0)
-├── internal/ai_grid/               # gRPC service implementations
+├── internal/servers/               # Per-resource gRPC servers (OSAC-style builders)
 ├── internal/keycloak/              # Keycloak Admin API client
 ├── internal/restgateway/           # HTTP gateway + Swagger UI
 ├── deploy/kind/                    # Kind manifests

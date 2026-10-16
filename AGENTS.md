@@ -1,7 +1,7 @@
 # AI Grid Provider Backend
 
 Go gRPC + REST (grpc-gateway) service for AI Grid provider APIs. Today it
-exposes Ping, ManagedClusters (OCM/RHACM), and Tenants (Keycloak Organizations).
+exposes Ping, ManagedClusters CRUD (OCM/RHACM hub CRs), and Tenants (Keycloak Organizations).
 Local runtime is Kind + Podman; OpenShift deploy is also supported. See
 [`README.md`](README.md).
 
@@ -40,11 +40,12 @@ proto/                          protobuf + buf config
 gen/ai_grid/v1/                 generated protobuf, gRPC, gateway
 docs/openapi/                   generated OpenAPI (Swagger 2.0)
 docs/API.md                     API building standards (authoritative)
-internal/ai_grid/               gRPC service implementations
+internal/servers/               Per-resource gRPC servers (OSAC-style builders)
 internal/keycloak/              Keycloak Admin API client
 internal/restgateway/           HTTP gateway + Swagger UI
 deploy/kind/                    Kind Kubernetes manifests
 deploy/openshift/               OpenShift manifests (kustomize + Routes)
+deploy/acm-hub/                 Helm chart + scripts for RHACM hub playground
 hack/                           Kind/OCM/OpenShift/prereq helpers
 integration/                    Kind gRPC integration tests
 ```
@@ -93,7 +94,10 @@ make push             # push container (podman login quay.io first)
 make build-and-push   # image + push
 make openshift-up     # deploy to current oc context (Quay image by default)
 make openshift-down   # remove OpenShift deploy
+make acm-hub-up       # RHACM via Helm/OLM + playground ManagedClusters
+make acm-hub-down     # tear down ACM hub Helm release
 ```
+
 
 Manual Kind bring-up:
 
