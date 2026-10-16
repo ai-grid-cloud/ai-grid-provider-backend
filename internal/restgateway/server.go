@@ -27,6 +27,7 @@ var openAPIFS embed.FS
 type Servers struct {
 	AiGrid          aigridv1.AiGridServer
 	ManagedClusters aigridv1.ManagedClustersServer
+	Clusters        aigridv1.ClustersServer
 	Tenants         aigridv1.TenantsServer
 }
 
@@ -42,8 +43,9 @@ func New(ctx context.Context, address string, servers Servers) (*Server, error) 
 	mux := runtime.NewServeMux(
 		runtime.WithMarshalerOption(runtime.MIMEWildcard, &runtime.JSONPb{
 			MarshalOptions: protojson.MarshalOptions{
-				UseProtoNames:   true,
-				EmitUnpopulated: false,
+				UseProtoNames: true,
+				// Emit defaults so PoC-shaped GridCluster always includes false booleans.
+				EmitUnpopulated: true,
 			},
 			UnmarshalOptions: protojson.UnmarshalOptions{
 				DiscardUnknown: true,
@@ -56,6 +58,9 @@ func New(ctx context.Context, address string, servers Servers) (*Server, error) 
 	}
 	if err := aigridv1.RegisterManagedClustersHandlerServer(ctx, mux, servers.ManagedClusters); err != nil {
 		return nil, fmt.Errorf("register ManagedClusters HTTP handlers: %w", err)
+	}
+	if err := aigridv1.RegisterClustersHandlerServer(ctx, mux, servers.Clusters); err != nil {
+		return nil, fmt.Errorf("register Clusters HTTP handlers: %w", err)
 	}
 	if err := aigridv1.RegisterTenantsHandlerServer(ctx, mux, servers.Tenants); err != nil {
 		return nil, fmt.Errorf("register Tenants HTTP handlers: %w", err)
