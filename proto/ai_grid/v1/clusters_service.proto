@@ -1,0 +1,61 @@
+syntax = "proto3";
+
+package ai_grid.v1;
+
+import "ai_grid/v1/cluster_type.proto";
+import "google/api/annotations.proto";
+
+option go_package = "github.com/osac-project/ai-grid-provider-backend/gen/ai_grid/v1;aigridv1";
+
+message ClustersListRequest {
+  // Index of the first result. If not specified the default value will be zero.
+  optional int32 offset = 1;
+
+  // Maximum number of results to be returned by the server. When not specified all
+  // the results will be returned.
+  optional int32 limit = 2;
+}
+
+message ClustersListResponse {
+  // Actual number of items returned.
+  int32 size = 1;
+
+  // Total number of items that match the search criteria.
+  int32 total = 2;
+
+  // List of GridCluster presentation objects.
+  repeated GridCluster items = 3;
+}
+
+message ClustersUpdateRequest {
+  // Cluster name (path).
+  string name = 1;
+
+  // Enroll body: only literal true is accepted (PoC enrollClusterSchema).
+  optional bool ai_grid_enabled = 2;
+}
+
+message ClustersUpdateResponse {
+  GridCluster object = 1;
+}
+
+// Console-facing cluster inventory and enroll surface.
+// Backed by hub ManagedClusters; Create/Delete remain on ManagedClusters.
+service Clusters {
+  rpc List(ClustersListRequest) returns (ClustersListResponse) {
+    option (google.api.http) = {
+      get: "/api/ai-grid/v1/clusters"
+      // Bare array matches PoC GET /api/clusters → GridCluster[].
+      response_body: "items"
+    };
+  }
+
+  // Enroll: PATCH with { "ai_grid_enabled": true } (JSON camelCase aiGridEnabled also accepted on unmarshal).
+  rpc Update(ClustersUpdateRequest) returns (ClustersUpdateResponse) {
+    option (google.api.http) = {
+      patch: "/api/ai-grid/v1/clusters/{name}"
+      body: "*"
+      response_body: "object"
+    };
+  }
+}

@@ -41,6 +41,8 @@ lint: fmt-check vet
 # Regenerates protobuf, gRPC, grpc-gateway, and OpenAPI (OSAC-style buf pipeline).
 generate:
 	cd proto && buf dep update && buf generate
+	# Drop legacy monolithic stubs if a prior generate left them behind.
+	rm -f gen/ai_grid/v1/ai_grid.pb.go gen/ai_grid/v1/ai_grid_grpc.pb.go gen/ai_grid/v1/ai_grid.pb.gw.go
 	mkdir -p internal/restgateway/openapi
 	cp docs/openapi/ai_grid.swagger.json internal/restgateway/openapi/ai_grid.swagger.json
 

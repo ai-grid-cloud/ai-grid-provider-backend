@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+package ai_grid.v1;
+
+import "buf/validate/validate.proto";
+
+option go_package = "github.com/osac-project/ai-grid-provider-backend/gen/ai_grid/v1;aigridv1";
+
+// GridCluster is the console Clusters-page presentation of a hub ManagedCluster.
+// Flat fields match the PoC GridCluster contract (snake_case JSON via gateway).
+message GridCluster {
+  // DNS-ish cluster name (ManagedCluster metadata.name).
+  string name = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 63
+    pattern: "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"
+  }];
+
+  // Ready | Offline | Unknown — from ManagedCluster Available condition.
+  string status = 2;
+
+  // Label ai-grid/enabled == "true".
+  bool ai_grid_enabled = 3;
+
+  // Label ai-grid/provisioned == "true".
+  bool provisioned = 4;
+
+  // Provisioned | Provisioning | Not provisioned.
+  string provisioning_status = 5;
+
+  // Optional location label used for model placement.
+  optional string location = 6;
+}
