@@ -11,7 +11,7 @@ TAG ?= latest
 PLATFORM ?= linux/amd64
 CONTAINER_ENGINE ?= $(shell command -v podman 2>/dev/null || command -v docker)
 
-.PHONY: all build test vet fmt-check lint verify generate image push build-and-push prereqs kind-test clean-kind openshift-up openshift-down
+.PHONY: all build test vet fmt-check lint verify generate image push build-and-push prereqs kind-test clean-kind openshift-up openshift-down acm-hub-up acm-hub-down
 
 all: verify
 
@@ -87,3 +87,13 @@ openshift-up:
 
 openshift-down:
 	bash hack/openshift-down.sh
+
+# Install RHACM (OLM + MultiClusterHub) + playground ManagedClusters on the
+# current OpenShift cluster. See deploy/acm-hub/README.md.
+# CHANNEL=release-2.13 SKIP_SAMPLES=1 make acm-hub-up
+acm-hub-up:
+	bash deploy/acm-hub/scripts/acm-hub-up.sh
+
+# FORCE_CLEAN=1 make acm-hub-down  (or: bash deploy/acm-hub/scripts/acm-hub-down.sh --force-clean)
+acm-hub-down:
+	bash deploy/acm-hub/scripts/acm-hub-down.sh
