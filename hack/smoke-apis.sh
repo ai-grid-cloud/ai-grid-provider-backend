@@ -52,8 +52,24 @@ else
 fi
 
 call_grpc 'AiGrid/Ping' '{"name":"smoke"}' 'ai_grid.v1.AiGrid/Ping'
-call_grpc 'ManagedClusters/ListManagedClusters' '{}' 'ai_grid.v1.ManagedClusters/ListManagedClusters'
-call_grpc 'Tenants/ListTenants' '{}' 'ai_grid.v1.Tenants/ListTenants'
+call_grpc 'ManagedClusters/List' '{}' 'ai_grid.v1.ManagedClusters/List'
+# Disposable CRUD smoke (best-effort cleanup if a prior run left the object).
+smoke_cluster='ai-grid-smoke-temp'
+grpcurl -plaintext -d "{\"id\":\"${smoke_cluster}\"}" "$addr" \
+  ai_grid.v1.ManagedClusters/Delete >/dev/null 2>&1 || true
+call_grpc 'ManagedClusters/Create' \
+  "{\"object\":{\"id\":\"${smoke_cluster}\",\"metadata\":{\"name\":\"${smoke_cluster}\",\"labels\":{\"environment\":\"smoke\"}},\"spec\":{\"hub_accepts_client\":true}}}" \
+  'ai_grid.v1.ManagedClusters/Create'
+call_grpc 'ManagedClusters/Get' \
+  "{\"id\":\"${smoke_cluster}\"}" \
+  'ai_grid.v1.ManagedClusters/Get'
+call_grpc 'ManagedClusters/Update' \
+  "{\"object\":{\"id\":\"${smoke_cluster}\",\"metadata\":{\"labels\":{\"ai-grid/enabled\":\"true\"}},\"spec\":{\"hub_accepts_client\":true}}}" \
+  'ai_grid.v1.ManagedClusters/Update'
+call_grpc 'ManagedClusters/Delete' \
+  "{\"id\":\"${smoke_cluster}\"}" \
+  'ai_grid.v1.ManagedClusters/Delete'
+call_grpc 'Tenants/List' '{}' 'ai_grid.v1.Tenants/List'
 call_grpc 'Health/Check' '{}' 'grpc.health.v1.Health/Check'
 
 call_http 'GET /openapi.json' '/openapi.json'
