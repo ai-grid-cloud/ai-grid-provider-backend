@@ -50,7 +50,7 @@ func TestClientPing(t *testing.T) {
 	}
 }
 
-func TestClientManagedClusterCRUD(t *testing.T) {
+func TestClientClusterCRUD(t *testing.T) {
 	t.Parallel()
 
 	c, cleanup := startTestClient(t, nil, fakeOrganizationLister{})
@@ -58,7 +58,7 @@ func TestClientManagedClusterCRUD(t *testing.T) {
 	ctx := context.Background()
 	const id = "client-crud-demo"
 
-	created, err := c.CreateManagedCluster(ctx, &aigridv1.ManagedCluster{
+	created, err := c.CreateCluster(ctx, &aigridv1.ManagedCluster{
 		Id: id,
 		Metadata: &aigridv1.Metadata{
 			Name:   id,
@@ -67,7 +67,7 @@ func TestClientManagedClusterCRUD(t *testing.T) {
 		Spec: &aigridv1.ManagedClusterSpec{HubAcceptsClient: true},
 	})
 	if err != nil {
-		t.Fatalf("CreateManagedCluster() error = %v", err)
+		t.Fatalf("CreateCluster() error = %v", err)
 	}
 	if created.GetId() != id {
 		t.Fatalf("created id = %q, want %q", created.GetId(), id)
@@ -79,23 +79,23 @@ func TestClientManagedClusterCRUD(t *testing.T) {
 		t.Fatal("created hubAcceptsClient = false, want true")
 	}
 
-	listed, err := c.ListManagedClusters(ctx)
+	listed, err := c.ListClusters(ctx)
 	if err != nil {
-		t.Fatalf("ListManagedClusters() error = %v", err)
+		t.Fatalf("ListClusters() error = %v", err)
 	}
 	if !containsManagedCluster(listed, id) {
-		t.Fatalf("ListManagedClusters() missing %q; got %v", id, managedClusterIDs(listed))
+		t.Fatalf("ListClusters() missing %q; got %v", id, managedClusterIDs(listed))
 	}
 
-	got, err := c.GetManagedCluster(ctx, id)
+	got, err := c.GetCluster(ctx, id)
 	if err != nil {
-		t.Fatalf("GetManagedCluster() error = %v", err)
+		t.Fatalf("GetCluster() error = %v", err)
 	}
 	if got.GetMetadata().GetLabels()["environment"] != "dev" {
 		t.Fatalf("get labels = %v", got.GetMetadata().GetLabels())
 	}
 
-	updated, err := c.UpdateManagedCluster(ctx, &aigridv1.ManagedCluster{
+	updated, err := c.UpdateCluster(ctx, &aigridv1.ManagedCluster{
 		Id: id,
 		Metadata: &aigridv1.Metadata{
 			Labels: map[string]string{"environment": "staging", "ai-grid/enabled": "true"},
@@ -103,7 +103,7 @@ func TestClientManagedClusterCRUD(t *testing.T) {
 		Spec: &aigridv1.ManagedClusterSpec{HubAcceptsClient: false},
 	}, nil)
 	if err != nil {
-		t.Fatalf("UpdateManagedCluster() error = %v", err)
+		t.Fatalf("UpdateCluster() error = %v", err)
 	}
 	if updated.GetMetadata().GetLabels()["environment"] != "staging" {
 		t.Fatalf("updated environment = %q", updated.GetMetadata().GetLabels()["environment"])
@@ -115,7 +115,7 @@ func TestClientManagedClusterCRUD(t *testing.T) {
 		t.Fatal("updated hubAcceptsClient = true, want false")
 	}
 
-	masked, err := c.UpdateManagedCluster(ctx, &aigridv1.ManagedCluster{
+	masked, err := c.UpdateCluster(ctx, &aigridv1.ManagedCluster{
 		Id: id,
 		Metadata: &aigridv1.Metadata{
 			Labels: map[string]string{"environment": "prod"},
@@ -123,7 +123,7 @@ func TestClientManagedClusterCRUD(t *testing.T) {
 		Spec: &aigridv1.ManagedClusterSpec{HubAcceptsClient: true},
 	}, &fieldmaskpb.FieldMask{Paths: []string{"metadata.labels"}})
 	if err != nil {
-		t.Fatalf("UpdateManagedCluster(mask) error = %v", err)
+		t.Fatalf("UpdateCluster(mask) error = %v", err)
 	}
 	if masked.GetMetadata().GetLabels()["environment"] != "prod" {
 		t.Fatalf("masked environment = %q", masked.GetMetadata().GetLabels()["environment"])
@@ -132,45 +132,16 @@ func TestClientManagedClusterCRUD(t *testing.T) {
 		t.Fatal("hubAcceptsClient changed despite labels-only mask")
 	}
 
-	if err := c.DeleteManagedCluster(ctx, id); err != nil {
-		t.Fatalf("DeleteManagedCluster() error = %v", err)
+	if err := c.DeleteCluster(ctx, id); err != nil {
+		t.Fatalf("DeleteCluster() error = %v", err)
 	}
-	_, err = c.GetManagedCluster(ctx, id)
+	_, err = c.GetCluster(ctx, id)
 	if status.Code(err) != codes.NotFound {
 		t.Fatalf("Get after delete code = %v, want NotFound (%v)", status.Code(err), err)
 	}
 }
 
-func TestClientClustersListAndEnroll(t *testing.T) {
-	t.Parallel()
-
-	c, cleanup := startTestClient(t, []runtime.Object{
-		managedCluster("site4", map[string]string{"location": "site4"}, true),
-	}, fakeOrganizationLister{})
-	defer cleanup()
-	ctx := context.Background()
-
-	listed, err := c.ListClusters(ctx)
-	if err != nil {
-		t.Fatalf("ListClusters() error = %v", err)
-	}
-	if len(listed) != 1 || listed[0].GetName() != "site4" || listed[0].GetAiGridEnabled() {
-		t.Fatalf("ListClusters() = %+v", listed)
-	}
-	if listed[0].GetProvisioningStatus() != "Not provisioned" {
-		t.Fatalf("provisioning_status = %q", listed[0].GetProvisioningStatus())
-	}
-
-	enrolled, err := c.EnrollCluster(ctx, "site4")
-	if err != nil {
-		t.Fatalf("EnrollCluster() error = %v", err)
-	}
-	if !enrolled.GetAiGridEnabled() || enrolled.GetProvisioningStatus() != "Provisioning" || enrolled.GetLocation() != "site4" {
-		t.Fatalf("EnrollCluster() = %+v", enrolled)
-	}
-}
-
-func TestClientManagedClusterErrors(t *testing.T) {
+func TestClientClusterErrors(t *testing.T) {
 	t.Parallel()
 
 	c, cleanup := startTestClient(t, []runtime.Object{
@@ -179,12 +150,12 @@ func TestClientManagedClusterErrors(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 
-	_, err := c.GetManagedCluster(ctx, "missing")
+	_, err := c.GetCluster(ctx, "missing")
 	if status.Code(err) != codes.NotFound {
 		t.Fatalf("Get missing code = %v, want NotFound (%v)", status.Code(err), err)
 	}
 
-	_, err = c.CreateManagedCluster(ctx, &aigridv1.ManagedCluster{
+	_, err = c.CreateCluster(ctx, &aigridv1.ManagedCluster{
 		Id:   "existing",
 		Spec: &aigridv1.ManagedClusterSpec{HubAcceptsClient: true},
 	})
@@ -192,7 +163,7 @@ func TestClientManagedClusterErrors(t *testing.T) {
 		t.Fatalf("Create duplicate code = %v, want AlreadyExists (%v)", status.Code(err), err)
 	}
 
-	_, err = c.CreateManagedCluster(ctx, &aigridv1.ManagedCluster{
+	_, err = c.CreateCluster(ctx, &aigridv1.ManagedCluster{
 		Id:   "INVALID_NAME",
 		Spec: &aigridv1.ManagedClusterSpec{HubAcceptsClient: true},
 	})
@@ -249,14 +220,8 @@ func startTestClient(t *testing.T, objects []runtime.Object, orgs fakeOrganizati
 	if err != nil {
 		t.Fatalf("build AiGrid server: %v", err)
 	}
-	managedClustersServer, err := servers.NewManagedClustersServer().
-		SetDynamicClient(dynamicClient).
-		Build()
-	if err != nil {
-		t.Fatalf("build ManagedClusters server: %v", err)
-	}
 	clustersServer, err := servers.NewClustersServer().
-		SetManagedClusters(managedClustersServer).
+		SetDynamicClient(dynamicClient).
 		Build()
 	if err != nil {
 		t.Fatalf("build Clusters server: %v", err)
@@ -274,7 +239,6 @@ func startTestClient(t *testing.T, objects []runtime.Object, orgs fakeOrganizati
 	}
 	grpcServer := grpc.NewServer()
 	aigridv1.RegisterAiGridServer(grpcServer, aiGridServer)
-	aigridv1.RegisterManagedClustersServer(grpcServer, managedClustersServer)
 	aigridv1.RegisterClustersServer(grpcServer, clustersServer)
 	aigridv1.RegisterTenantsServer(grpcServer, tenantsServer)
 	go func() {

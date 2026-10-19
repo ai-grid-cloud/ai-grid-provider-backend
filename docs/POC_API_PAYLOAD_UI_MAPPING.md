@@ -1,6 +1,6 @@
 # PoC API ↔ UI payload mapping (for ai-grid-provider-backend)
 
-Translation reference: maps **every** PoC admin-portal page to the REST contracts it uses, so the same capabilities can be implemented under `ai-grid-provider-backend` (`/api/ai-grid/v1/`, proto + grpc-gateway).
+Translation reference: maps **every** PoC admin-portal page to the REST contracts it uses, so the same capabilities can be implemented under `ai-grid-provider-backend` (`/api/v1/`, proto + grpc-gateway).
 
 | Item | Path / note |
 | --- | --- |
@@ -10,7 +10,7 @@ Translation reference: maps **every** PoC admin-portal page to the REST contract
 | Shared Zod contracts | `ai-grid-cloud-provider-poc/shared/*.mjs` |
 | PoC OpenAPI | `ai-grid-cloud-provider-poc/docs/openapi.json` |
 | Sibling Users/Keycloak API | Outside PoC repo: `RedHat/keycloak/api` (proxied as `/api/users` → `:18082`) |
-| This backend today | Ping, ManagedClusters, Tenants under `/api/ai-grid/v1/` — see [`API.md`](./API.md) |
+| This backend today | Ping, Clusters (ManagedCluster CRUD), Tenants under `/api/v1/` — see [`API.md`](./API.md) |
 | Source of truth | **Code** (handlers + Zod + UI clients). OpenAPI/README noted where they disagree. |
 
 ---
@@ -133,7 +133,7 @@ Serve OpenAPI + Swagger UI. Not listed in OpenAPI `paths`.
 
 ### Translation notes
 
-Map to existing `Ping` / readiness patterns under `/api/ai-grid/v1/ping`. Do not require Git-specific `storage` / `autoCommit` fields in production.
+Map to existing `Ping` / readiness patterns under `/api/v1/ping`. Do not require Git-specific `storage` / `autoCommit` fields in production.
 
 ---
 
@@ -204,13 +204,13 @@ Only literal `true` accepted; extra fields → 422.
 
 | PoC | provider-backend |
 | --- | --- |
-| `GET /api/clusters` → `GridCluster[]` | `GET /api/ai-grid/v1/clusters` → bare `GridCluster[]` (`response_body: items`) |
-| `PATCH /api/clusters/{name}` `{ "aiGridEnabled": true }` | `PATCH /api/ai-grid/v1/clusters/{name}` body `{ "ai_grid_enabled": true }` (camelCase `aiGridEnabled` accepted on unmarshal) |
+| `GET /api/clusters` → `GridCluster[]` | `GET /api/v1/clusters` → OSAC `ManagedCluster` list envelope (`items`/`size`/`total`) |
+| `PATCH /api/clusters/{name}` `{ "aiGridEnabled": true }` | `PATCH /api/v1/clusters/{id}` with ManagedCluster body (label merge via `metadata.labels`) |
 | Flat camelCase fields | Flat **snake_case** JSON (`UseProtoNames`); same field set |
 
 Mapping (ManagedCluster → GridCluster): `status` from Available condition (`True`→Ready, `False`→Offline, else Unknown); `ai_grid_enabled` / `provisioned` / `location` from labels (`ai-grid/enabled`, `ai-grid/provisioned`, `location`); `provisioning_status` = Provisioned \| Provisioning \| Not provisioned (same rules as PoC).
 
-OSAC CRUD stays at `/api/ai-grid/v1/managed_clusters` (Create/Delete unused by PoC UI). Enroll is label merge only (`ai-grid/enabled=true`).
+OSAC ManagedCluster CRUD is at `/api/v1/clusters`. Enroll-style updates are label merges on `metadata.labels` (`ai-grid/enabled=true`).
 
 **Remaining gaps vs PoC:** strict Zod reject of extra enroll fields (gateway `DiscardUnknown`); snake_case vs camelCase wire names (console must map or prefer snake_case).
 
@@ -766,7 +766,7 @@ Follow [`API.md`](./API.md) / [`AGENTS.md`](../AGENTS.md) when implementing:
 
 | PoC convention | Production target |
 | --- | --- |
-| Flat `/api/...` | Flat `/api/ai-grid/v1/...` |
+| Flat `/api/...` | Flat `/api/v1/...` |
 | camelCase JSON | Proto `snake_case` JSON (map at gateway/client) |
 | Ad-hoc DTOs | OSAC shape: `id` + `metadata` + `spec` + `status` |
 | `revision` + `If-Match` | Align with resource version / etag strategy in API.md |
@@ -831,7 +831,7 @@ Preserve **behavioral** contracts the console needs even if wire shape changes: 
 | `organizationId` derivation | Inferred from group name prefix; empty/mismatch can fail backend refine |
 | Portal API auth | Deferred in PoC; must be designed for production |
 | provider-backend Tenant vs PoC Tenant | Domains-only org vs full IdP Git tenant — product decision required |
-| provider-backend ManagedCluster vs PoC GridCluster | OSAC CRUD remains on `/managed_clusters`; PoC-shaped list/enroll is on `/api/ai-grid/v1/clusters` (snake_case JSON) |
+| provider-backend ManagedCluster vs PoC GridCluster | Production uses OSAC ManagedCluster at `/api/v1/clusters`; PoC flat `GridCluster` list/enroll is not exposed |
 
 ---
 

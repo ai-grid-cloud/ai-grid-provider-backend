@@ -33,7 +33,7 @@ func TestPing(t *testing.T) {
 	}
 }
 
-func TestListManagedClusters(t *testing.T) {
+func TestListClusters(t *testing.T) {
 	address := os.Getenv("AI_GRID_GRPC_ADDRESS")
 	if address == "" {
 		t.Skip("AI_GRID_GRPC_ADDRESS is not set; run via hack/test-kind.sh")
@@ -51,7 +51,7 @@ func TestListManagedClusters(t *testing.T) {
 	}
 	defer client.Close()
 
-	clusters, err := client.ListManagedClusters(ctx)
+	clusters, err := client.ListClusters(ctx)
 	if err != nil {
 		t.Fatalf("list managed clusters: %v", err)
 	}
@@ -89,9 +89,9 @@ func TestManagedClusterCRUD(t *testing.T) {
 	defer client.Close()
 
 	const name = "ai-grid-crud-temp"
-	_ = client.DeleteManagedCluster(ctx, name)
+	_ = client.DeleteCluster(ctx, name)
 
-	created, err := client.CreateManagedCluster(ctx, &aigridv1.ManagedCluster{
+	created, err := client.CreateCluster(ctx, &aigridv1.ManagedCluster{
 		Id: name,
 		Metadata: &aigridv1.Metadata{
 			Name:   name,
@@ -105,9 +105,9 @@ func TestManagedClusterCRUD(t *testing.T) {
 	if created.GetId() != name {
 		t.Fatalf("created id = %q, want %q", created.GetId(), name)
 	}
-	defer func() { _ = client.DeleteManagedCluster(ctx, name) }()
+	defer func() { _ = client.DeleteCluster(ctx, name) }()
 
-	got, err := client.GetManagedCluster(ctx, name)
+	got, err := client.GetCluster(ctx, name)
 	if err != nil {
 		t.Fatalf("get managed cluster: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestManagedClusterCRUD(t *testing.T) {
 		t.Fatalf("get labels = %v", got.GetMetadata().GetLabels())
 	}
 
-	updated, err := client.UpdateManagedCluster(ctx, &aigridv1.ManagedCluster{
+	updated, err := client.UpdateCluster(ctx, &aigridv1.ManagedCluster{
 		Id: name,
 		Metadata: &aigridv1.Metadata{
 			Labels: map[string]string{"environment": "updated", "ai-grid/enabled": "true"},
@@ -132,10 +132,10 @@ func TestManagedClusterCRUD(t *testing.T) {
 		t.Fatalf("updated ai-grid/enabled = %q", updated.GetMetadata().GetLabels()["ai-grid/enabled"])
 	}
 
-	if err := client.DeleteManagedCluster(ctx, name); err != nil {
+	if err := client.DeleteCluster(ctx, name); err != nil {
 		t.Fatalf("delete managed cluster: %v", err)
 	}
-	if _, err := client.GetManagedCluster(ctx, name); err == nil {
+	if _, err := client.GetCluster(ctx, name); err == nil {
 		t.Fatal("get after delete succeeded, want error")
 	}
 }

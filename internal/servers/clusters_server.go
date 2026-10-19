@@ -2,33 +2,43 @@ package servers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
+	"regexp"
+	"strings"
 
 	aigridv1 "github.com/osac-project/ai-grid-provider-backend/gen/ai_grid/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/dynamic"
 )
 
-// managedClusterFacade is the ManagedClusters surface used by the Clusters presentation layer.
-type managedClusterFacade interface {
-	List(context.Context, *aigridv1.ManagedClustersListRequest) (*aigridv1.ManagedClustersListResponse, error)
-	Get(context.Context, *aigridv1.ManagedClustersGetRequest) (*aigridv1.ManagedClustersGetResponse, error)
-	Update(context.Context, *aigridv1.ManagedClustersUpdateRequest) (*aigridv1.ManagedClustersUpdateResponse, error)
+var managedClustersResource = schema.GroupVersionResource{
+	Group: "cluster.open-cluster-management.io", Version: "v1", Resource: "managedclusters",
 }
+
+// RFC 1123 DNS label: 1–63 chars, lowercase alphanumeric, hyphens allowed inside.
+var managedClusterNameRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
 // ClustersServerBuilder configures a ClustersServer.
 type ClustersServerBuilder struct {
-	logger   *slog.Logger
-	clusters managedClusterFacade
+	logger *slog.Logger
+	client dynamic.Interface
 }
 
-// ClustersServer implements ai_grid.v1.Clusters as a PoC-shaped facade over ManagedClusters.
+// ClustersServer implements ai_grid.v1.Clusters against hub ManagedCluster CRs.
 type ClustersServer struct {
 	aigridv1.UnimplementedClustersServer
-	logger   *slog.Logger
-	clusters managedClusterFacade
+	logger *slog.Logger
+	client dynamic.Interface
 }
 
 var _ aigridv1.ClustersServer = (*ClustersServer)(nil)
@@ -44,72 +54,213 @@ func (b *ClustersServerBuilder) SetLogger(logger *slog.Logger) *ClustersServerBu
 	return b
 }
 
-// SetManagedClusters sets the ManagedClusters backend. Mandatory.
-func (b *ClustersServerBuilder) SetManagedClusters(clusters managedClusterFacade) *ClustersServerBuilder {
-	b.clusters = clusters
+// SetDynamicClient sets the Kubernetes dynamic client. Mandatory.
+func (b *ClustersServerBuilder) SetDynamicClient(client dynamic.Interface) *ClustersServerBuilder {
+	b.client = client
 	return b
 }
 
 // Build creates the ClustersServer.
 func (b *ClustersServerBuilder) Build() (*ClustersServer, error) {
-	if b.clusters == nil {
-		return nil, errors.New("ManagedClusters facade is mandatory")
+	if b.client == nil {
+		return nil, errors.New("Kubernetes dynamic client is mandatory")
 	}
 	logger := b.logger
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &ClustersServer{logger: logger, clusters: b.clusters}, nil
+	return &ClustersServer{logger: logger, client: b.client}, nil
 }
 
-// List returns GridCluster presentation objects for the console Clusters page.
+// List returns ManagedCluster objects from the Kubernetes API.
 func (s *ClustersServer) List(ctx context.Context, req *aigridv1.ClustersListRequest) (*aigridv1.ClustersListResponse, error) {
-	listed, err := s.clusters.List(ctx, &aigridv1.ManagedClustersListRequest{
-		Offset: req.Offset,
-		Limit:  req.Limit,
-	})
+	list, err := s.client.Resource(managedClustersResource).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil, err
+		if apierrors.IsNotFound(err) {
+			return &aigridv1.ClustersListResponse{}, nil
+		}
+		return nil, fmt.Errorf("list ManagedCluster resources: %w", err)
 	}
 
-	items := make([]*aigridv1.GridCluster, 0, len(listed.GetItems()))
-	for _, mc := range listed.GetItems() {
-		items = append(items, gridClusterFromManagedCluster(mc))
+	items := make([]*aigridv1.ManagedCluster, 0, len(list.Items))
+	for _, item := range list.Items {
+		items = append(items, managedClusterFromUnstructured(item))
 	}
+	page, total := applyListWindow(items, req.Offset, req.Limit)
 	return &aigridv1.ClustersListResponse{
-		Size:  int32(len(items)),
-		Total: listed.GetTotal(),
-		Items: items,
+		Size:  int32(len(page)),
+		Total: total,
+		Items: page,
 	}, nil
 }
 
-// Update enrolls a cluster into AI Grid (label ai-grid/enabled=true).
-// Only { "ai_grid_enabled": true } is accepted (PoC enroll semantics).
-func (s *ClustersServer) Update(ctx context.Context, req *aigridv1.ClustersUpdateRequest) (*aigridv1.ClustersUpdateResponse, error) {
-	name := req.GetName()
-	if err := validateManagedClusterID(name); err != nil {
+// Get returns a single ManagedCluster by id.
+func (s *ClustersServer) Get(ctx context.Context, req *aigridv1.ClustersGetRequest) (*aigridv1.ClustersGetResponse, error) {
+	id := req.GetId()
+	if err := validateManagedClusterID(id); err != nil {
 		return nil, err
 	}
-	if req.AiGridEnabled == nil || !req.GetAiGridEnabled() {
-		return nil, status.Error(codes.InvalidArgument, "only ai_grid_enabled: true is supported")
-	}
-
-	updated, err := s.clusters.Update(ctx, &aigridv1.ManagedClustersUpdateRequest{
-		Object: &aigridv1.ManagedCluster{
-			Id: name,
-			Metadata: &aigridv1.Metadata{
-				Labels: enrollLabelPatch(),
-			},
-		},
-		UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"metadata.labels"}},
-	})
+	obj, err := s.client.Resource(managedClustersResource).Get(ctx, id, metav1.GetOptions{})
 	if err != nil {
+		return nil, mapManagedClusterAPIError("get", id, err)
+	}
+	return &aigridv1.ClustersGetResponse{Object: managedClusterFromUnstructured(*obj)}, nil
+}
+
+// Create creates a hub-side ManagedCluster CR.
+func (s *ClustersServer) Create(ctx context.Context, req *aigridv1.ClustersCreateRequest) (*aigridv1.ClustersCreateResponse, error) {
+	object := req.GetObject()
+	if object == nil {
+		return nil, status.Error(codes.InvalidArgument, "object is required")
+	}
+	id := managedClusterID(object)
+	if err := validateManagedClusterID(id); err != nil {
 		return nil, err
 	}
 
-	object := gridClusterFromManagedCluster(updated.GetObject())
-	if !object.GetAiGridEnabled() {
-		return nil, status.Error(codes.Unavailable, "hub did not confirm AI Grid membership")
+	hubAccepts := false
+	if object.GetSpec() != nil {
+		hubAccepts = object.GetSpec().GetHubAcceptsClient()
 	}
-	return &aigridv1.ClustersUpdateResponse{Object: object}, nil
+	labels := map[string]string{}
+	if object.GetMetadata() != nil {
+		for k, v := range object.GetMetadata().GetLabels() {
+			labels[k] = v
+		}
+	}
+
+	obj := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "cluster.open-cluster-management.io/v1",
+		"kind":       "ManagedCluster",
+		"metadata": map[string]interface{}{
+			"name": id,
+		},
+		"spec": map[string]interface{}{
+			"hubAcceptsClient": hubAccepts,
+		},
+	}}
+	if len(labels) > 0 {
+		_ = unstructured.SetNestedMap(obj.Object, stringMapToInterfaceMap(labels), "metadata", "labels")
+	}
+
+	created, err := s.client.Resource(managedClustersResource).Create(ctx, obj, metav1.CreateOptions{})
+	if err != nil {
+		return nil, mapManagedClusterAPIError("create", id, err)
+	}
+	return &aigridv1.ClustersCreateResponse{Object: managedClusterFromUnstructured(*created)}, nil
+}
+
+// Update merge-patches labels and/or hubAcceptsClient according to update_mask.
+// An empty mask updates all mutable fields (labels merge + hubAcceptsClient).
+func (s *ClustersServer) Update(ctx context.Context, req *aigridv1.ClustersUpdateRequest) (*aigridv1.ClustersUpdateResponse, error) {
+	object := req.GetObject()
+	if object == nil {
+		return nil, status.Error(codes.InvalidArgument, "object is required")
+	}
+	id := managedClusterID(object)
+	if err := validateManagedClusterID(id); err != nil {
+		return nil, err
+	}
+
+	current, err := s.client.Resource(managedClustersResource).Get(ctx, id, metav1.GetOptions{})
+	if err != nil {
+		return nil, mapManagedClusterAPIError("get", id, err)
+	}
+
+	updateLabels, updateHub := updatePaths(req.GetUpdateMask())
+
+	patchBody := map[string]interface{}{}
+	if updateLabels {
+		mergedLabels := map[string]string{}
+		for k, v := range current.GetLabels() {
+			mergedLabels[k] = v
+		}
+		if object.GetMetadata() != nil {
+			for k, v := range object.GetMetadata().GetLabels() {
+				mergedLabels[k] = v
+			}
+		}
+		patchBody["metadata"] = map[string]interface{}{
+			"labels": stringMapToInterfaceMap(mergedLabels),
+		}
+	}
+	if updateHub {
+		hubAccepts := false
+		if object.GetSpec() != nil {
+			hubAccepts = object.GetSpec().GetHubAcceptsClient()
+		}
+		patchBody["spec"] = map[string]interface{}{
+			"hubAcceptsClient": hubAccepts,
+		}
+	}
+	if len(patchBody) == 0 {
+		return &aigridv1.ClustersUpdateResponse{Object: managedClusterFromUnstructured(*current)}, nil
+	}
+
+	patchBytes, err := json.Marshal(patchBody)
+	if err != nil {
+		return nil, fmt.Errorf("marshal ManagedCluster patch: %w", err)
+	}
+
+	updated, err := s.client.Resource(managedClustersResource).Patch(
+		ctx, id, types.MergePatchType, patchBytes, metav1.PatchOptions{},
+	)
+	if err != nil {
+		return nil, mapManagedClusterAPIError("update", id, err)
+	}
+	return &aigridv1.ClustersUpdateResponse{Object: managedClusterFromUnstructured(*updated)}, nil
+}
+
+// Delete deletes a ManagedCluster by id.
+func (s *ClustersServer) Delete(ctx context.Context, req *aigridv1.ClustersDeleteRequest) (*aigridv1.ClustersDeleteResponse, error) {
+	id := req.GetId()
+	if err := validateManagedClusterID(id); err != nil {
+		return nil, err
+	}
+	err := s.client.Resource(managedClustersResource).Delete(ctx, id, metav1.DeleteOptions{})
+	if err != nil {
+		return nil, mapManagedClusterAPIError("delete", id, err)
+	}
+	return &aigridv1.ClustersDeleteResponse{}, nil
+}
+
+func updatePaths(mask *fieldmaskpb.FieldMask) (labels, hub bool) {
+	if mask == nil || len(mask.GetPaths()) == 0 {
+		return true, true
+	}
+	for _, path := range mask.GetPaths() {
+		p := strings.TrimPrefix(path, "object.")
+		switch {
+		case p == "metadata.labels" || p == "metadata" || strings.HasPrefix(p, "metadata.labels"):
+			labels = true
+		case p == "spec.hub_accepts_client" || p == "spec" || strings.HasPrefix(p, "spec."):
+			hub = true
+		}
+	}
+	return labels, hub
+}
+
+func validateManagedClusterID(id string) error {
+	if id == "" {
+		return status.Error(codes.InvalidArgument, "id is required")
+	}
+	if !managedClusterNameRE.MatchString(id) {
+		return status.Errorf(codes.InvalidArgument, "id %q is not a valid RFC 1123 DNS label", id)
+	}
+	return nil
+}
+
+func mapManagedClusterAPIError(op, id string, err error) error {
+	switch {
+	case apierrors.IsNotFound(err):
+		return status.Errorf(codes.NotFound, "ManagedCluster %q not found", id)
+	case apierrors.IsAlreadyExists(err):
+		return status.Errorf(codes.AlreadyExists, "ManagedCluster %q already exists", id)
+	case apierrors.IsInvalid(err), apierrors.IsBadRequest(err):
+		return status.Errorf(codes.InvalidArgument, "%s ManagedCluster %q: %v", op, id, err)
+	case apierrors.IsForbidden(err), apierrors.IsUnauthorized(err):
+		return status.Errorf(codes.PermissionDenied, "%s ManagedCluster %q: %v", op, id, err)
+	default:
+		return fmt.Errorf("%s ManagedCluster %q: %w", op, id, err)
+	}
 }

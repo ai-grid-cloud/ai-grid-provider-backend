@@ -2,7 +2,7 @@
   "swagger": "2.0",
   "info": {
     "title": "AI Grid API",
-    "description": "gRPC-Gateway REST surface for ai-grid-provider-backend (Ping, ManagedClusters, Clusters, Tenants).",
+    "description": "gRPC-Gateway REST surface for ai-grid-provider-backend (Ping, Clusters, Tenants).",
     "version": "0.1.0",
     "contact": {
       "name": "AI Grid",
@@ -15,9 +15,6 @@
     },
     {
       "name": "Clusters"
-    },
-    {
-      "name": "ManagedClusters"
     },
     {
       "name": "Tenants"
@@ -34,98 +31,14 @@
     "application/json"
   ],
   "paths": {
-    "/api/ai-grid/v1/clusters": {
+    "/api/v1/clusters": {
       "get": {
         "operationId": "Clusters_List",
         "responses": {
           "200": {
-            "description": "List of GridCluster presentation objects.",
-            "schema": {
-              "type": "array",
-              "items": {
-                "type": "object",
-                "$ref": "#/definitions/v1GridCluster"
-              }
-            }
-          },
-          "default": {
-            "description": "An unexpected error response.",
-            "schema": {
-              "$ref": "#/definitions/rpcStatus"
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "offset",
-            "description": "Index of the first result. If not specified the default value will be zero.",
-            "in": "query",
-            "required": false,
-            "type": "integer",
-            "format": "int32"
-          },
-          {
-            "name": "limit",
-            "description": "Maximum number of results to be returned by the server. When not specified all\nthe results will be returned.",
-            "in": "query",
-            "required": false,
-            "type": "integer",
-            "format": "int32"
-          }
-        ],
-        "tags": [
-          "Clusters"
-        ]
-      }
-    },
-    "/api/ai-grid/v1/clusters/{name}": {
-      "patch": {
-        "summary": "Enroll: PATCH with { \"ai_grid_enabled\": true } (JSON camelCase aiGridEnabled also accepted on unmarshal).",
-        "operationId": "Clusters_Update",
-        "responses": {
-          "200": {
-            "description": "",
-            "schema": {
-              "$ref": "#/definitions/v1GridCluster"
-            }
-          },
-          "default": {
-            "description": "An unexpected error response.",
-            "schema": {
-              "$ref": "#/definitions/rpcStatus"
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "name",
-            "description": "Cluster name (path).",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "body",
-            "in": "body",
-            "required": true,
-            "schema": {
-              "$ref": "#/definitions/v1ClustersUpdateBody"
-            }
-          }
-        ],
-        "tags": [
-          "Clusters"
-        ]
-      }
-    },
-    "/api/ai-grid/v1/managed_clusters": {
-      "get": {
-        "operationId": "ManagedClusters_List",
-        "responses": {
-          "200": {
             "description": "A successful response.",
             "schema": {
-              "$ref": "#/definitions/v1ManagedClustersListResponse"
+              "$ref": "#/definitions/v1ClustersListResponse"
             }
           },
           "default": {
@@ -168,11 +81,11 @@
           }
         ],
         "tags": [
-          "ManagedClusters"
+          "Clusters"
         ]
       },
       "post": {
-        "operationId": "ManagedClusters_Create",
+        "operationId": "Clusters_Create",
         "responses": {
           "200": {
             "description": "",
@@ -198,13 +111,13 @@
           }
         ],
         "tags": [
-          "ManagedClusters"
+          "Clusters"
         ]
       }
     },
-    "/api/ai-grid/v1/managed_clusters/{id}": {
+    "/api/v1/clusters/{id}": {
       "get": {
-        "operationId": "ManagedClusters_Get",
+        "operationId": "Clusters_Get",
         "responses": {
           "200": {
             "description": "",
@@ -228,16 +141,16 @@
           }
         ],
         "tags": [
-          "ManagedClusters"
+          "Clusters"
         ]
       },
       "delete": {
-        "operationId": "ManagedClusters_Delete",
+        "operationId": "Clusters_Delete",
         "responses": {
           "200": {
             "description": "A successful response.",
             "schema": {
-              "$ref": "#/definitions/v1ManagedClustersDeleteResponse"
+              "$ref": "#/definitions/v1ClustersDeleteResponse"
             }
           },
           "default": {
@@ -256,13 +169,13 @@
           }
         ],
         "tags": [
-          "ManagedClusters"
+          "Clusters"
         ]
       }
     },
-    "/api/ai-grid/v1/managed_clusters/{object.id}": {
+    "/api/v1/clusters/{object.id}": {
       "patch": {
-        "operationId": "ManagedClusters_Update",
+        "operationId": "Clusters_Update",
         "responses": {
           "200": {
             "description": "",
@@ -314,11 +227,11 @@
           }
         ],
         "tags": [
-          "ManagedClusters"
+          "Clusters"
         ]
       }
     },
-    "/api/ai-grid/v1/ping": {
+    "/api/v1/ping": {
       "get": {
         "operationId": "AiGrid_Ping",
         "responses": {
@@ -348,7 +261,7 @@
         ]
       }
     },
-    "/api/ai-grid/v1/tenants": {
+    "/api/v1/tenants": {
       "get": {
         "operationId": "Tenants_List",
         "responses": {
@@ -440,6 +353,25 @@
         }
       }
     },
+    "v1ClustersCreateResponse": {
+      "type": "object",
+      "properties": {
+        "object": {
+          "$ref": "#/definitions/v1ManagedCluster"
+        }
+      }
+    },
+    "v1ClustersDeleteResponse": {
+      "type": "object"
+    },
+    "v1ClustersGetResponse": {
+      "type": "object",
+      "properties": {
+        "object": {
+          "$ref": "#/definitions/v1ManagedCluster"
+        }
+      }
+    },
     "v1ClustersListResponse": {
       "type": "object",
       "properties": {
@@ -457,18 +389,9 @@
           "type": "array",
           "items": {
             "type": "object",
-            "$ref": "#/definitions/v1GridCluster"
+            "$ref": "#/definitions/v1ManagedCluster"
           },
-          "description": "List of GridCluster presentation objects."
-        }
-      }
-    },
-    "v1ClustersUpdateBody": {
-      "type": "object",
-      "properties": {
-        "ai_grid_enabled": {
-          "type": "boolean",
-          "description": "Enroll body: only literal true is accepted (PoC enrollClusterSchema)."
+          "description": "List of results."
         }
       }
     },
@@ -476,39 +399,9 @@
       "type": "object",
       "properties": {
         "object": {
-          "$ref": "#/definitions/v1GridCluster"
+          "$ref": "#/definitions/v1ManagedCluster"
         }
       }
-    },
-    "v1GridCluster": {
-      "type": "object",
-      "properties": {
-        "name": {
-          "type": "string",
-          "description": "DNS-ish cluster name (ManagedCluster metadata.name)."
-        },
-        "status": {
-          "type": "string",
-          "description": "Ready | Offline | Unknown — from ManagedCluster Available condition."
-        },
-        "ai_grid_enabled": {
-          "type": "boolean",
-          "description": "Label ai-grid/enabled == \"true\"."
-        },
-        "provisioned": {
-          "type": "boolean",
-          "description": "Label ai-grid/provisioned == \"true\"."
-        },
-        "provisioning_status": {
-          "type": "string",
-          "description": "Provisioned | Provisioning | Not provisioned."
-        },
-        "location": {
-          "type": "string",
-          "description": "Optional location label used for model placement."
-        }
-      },
-      "description": "GridCluster is the console Clusters-page presentation of a hub ManagedCluster.\nFlat fields match the PoC GridCluster contract (snake_case JSON via gateway)."
     },
     "v1ManagedCluster": {
       "type": "object",
@@ -556,56 +449,6 @@
         }
       },
       "description": "Observed state of a hub ManagedCluster."
-    },
-    "v1ManagedClustersCreateResponse": {
-      "type": "object",
-      "properties": {
-        "object": {
-          "$ref": "#/definitions/v1ManagedCluster"
-        }
-      }
-    },
-    "v1ManagedClustersDeleteResponse": {
-      "type": "object"
-    },
-    "v1ManagedClustersGetResponse": {
-      "type": "object",
-      "properties": {
-        "object": {
-          "$ref": "#/definitions/v1ManagedCluster"
-        }
-      }
-    },
-    "v1ManagedClustersListResponse": {
-      "type": "object",
-      "properties": {
-        "size": {
-          "type": "integer",
-          "format": "int32",
-          "description": "Actual number of items returned."
-        },
-        "total": {
-          "type": "integer",
-          "format": "int32",
-          "description": "Total number of items that match the search criteria."
-        },
-        "items": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "$ref": "#/definitions/v1ManagedCluster"
-          },
-          "description": "List of results."
-        }
-      }
-    },
-    "v1ManagedClustersUpdateResponse": {
-      "type": "object",
-      "properties": {
-        "object": {
-          "$ref": "#/definitions/v1ManagedCluster"
-        }
-      }
     },
     "v1Metadata": {
       "type": "object",

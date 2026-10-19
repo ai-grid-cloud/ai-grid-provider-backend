@@ -45,14 +45,14 @@ func TestRESTGatewayRoutes(t *testing.T) {
 	}
 
 	t.Run("ping", func(t *testing.T) {
-		body := mustGET(t, client, baseURL+"/api/ai-grid/v1/ping?name=Ada")
+		body := mustGET(t, client, baseURL+"/api/v1/ping?name=Ada")
 		if !strings.Contains(body, "Welcome, Ada!") {
 			t.Fatalf("ping body = %q", body)
 		}
 	})
 
-	t.Run("list managed clusters", func(t *testing.T) {
-		body := mustGET(t, client, baseURL+"/api/ai-grid/v1/managed_clusters")
+	t.Run("list clusters", func(t *testing.T) {
+		body := mustGET(t, client, baseURL+"/api/v1/clusters")
 		var payload map[string]any
 		if err := json.Unmarshal([]byte(body), &payload); err != nil {
 			t.Fatalf("unmarshal list: %v (%s)", err, body)
@@ -68,32 +68,8 @@ func TestRESTGatewayRoutes(t *testing.T) {
 		}
 	})
 
-	t.Run("list clusters presentation", func(t *testing.T) {
-		body := mustGET(t, client, baseURL+"/api/ai-grid/v1/clusters")
-		var items []map[string]any
-		if err := json.Unmarshal([]byte(body), &items); err != nil {
-			t.Fatalf("unmarshal clusters list (want bare array): %v (%s)", err, body)
-		}
-		if len(items) != 1 {
-			t.Fatalf("clusters len = %d (%s)", len(items), body)
-		}
-		item := items[0]
-		if item["name"] != "seed-cluster" {
-			t.Fatalf("name = %v (%s)", item["name"], body)
-		}
-		if _, ok := item["ai_grid_enabled"]; !ok {
-			t.Fatalf("missing ai_grid_enabled: %s", body)
-		}
-		if _, ok := item["provisioning_status"]; !ok {
-			t.Fatalf("missing provisioning_status: %s", body)
-		}
-		if _, ok := item["status"]; !ok {
-			t.Fatalf("missing status: %s", body)
-		}
-	})
-
-	t.Run("get managed cluster", func(t *testing.T) {
-		body := mustGET(t, client, baseURL+"/api/ai-grid/v1/managed_clusters/seed-cluster")
+	t.Run("get cluster", func(t *testing.T) {
+		body := mustGET(t, client, baseURL+"/api/v1/clusters/seed-cluster")
 		var payload map[string]any
 		if err := json.Unmarshal([]byte(body), &payload); err != nil {
 			t.Fatalf("unmarshal get: %v (%s)", err, body)
@@ -112,7 +88,7 @@ func TestRESTGatewayRoutes(t *testing.T) {
 	})
 
 	t.Run("list tenants", func(t *testing.T) {
-		body := mustGET(t, client, baseURL+"/api/ai-grid/v1/tenants")
+		body := mustGET(t, client, baseURL+"/api/v1/tenants")
 		if !strings.Contains(body, `"tenant-a"`) || !strings.Contains(body, `"org-1"`) {
 			t.Fatalf("tenants body = %s", body)
 		}
@@ -173,53 +149,7 @@ func TestRESTGatewayRoutes(t *testing.T) {
 	})
 }
 
-func TestRESTClustersEnroll(t *testing.T) {
-	t.Parallel()
-
-	baseURL := startGateway(t,
-		[]runtime.Object{
-			managedCluster("cluster-b", map[string]string{"location": "site2", "team": "platform"}, true),
-		},
-		fakeOrganizationLister{},
-	)
-	client := &http.Client{Timeout: 10 * time.Second}
-
-	// Proto JSON accepts camelCase on unmarshal; gateway marshals snake_case.
-	req, err := http.NewRequest(http.MethodPatch, baseURL+"/api/ai-grid/v1/clusters/cluster-b", strings.NewReader(`{"aiGridEnabled":true}`))
-	if err != nil {
-		t.Fatalf("new enroll request: %v", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := client.Do(req)
-	if err != nil {
-		t.Fatalf("PATCH enroll: %v", err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("read enroll body: %v", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("enroll status = %d body = %s", resp.StatusCode, body)
-	}
-	var got map[string]any
-	if err := json.Unmarshal(body, &got); err != nil {
-		t.Fatalf("unmarshal enroll: %v (%s)", err, body)
-	}
-	if got["name"] != "cluster-b" || got["ai_grid_enabled"] != true || got["provisioning_status"] != "Provisioning" {
-		t.Fatalf("enroll body = %s", body)
-	}
-	if got["location"] != "site2" {
-		t.Fatalf("location not preserved: %s", body)
-	}
-
-	listBody := mustGET(t, client, baseURL+"/api/ai-grid/v1/clusters")
-	if !strings.Contains(listBody, `"ai_grid_enabled":true`) {
-		t.Fatalf("list after enroll = %s", listBody)
-	}
-}
-
-func TestRESTManagedClusterCreateDelete(t *testing.T) {
+func TestRESTClusterCreateDelete(t *testing.T) {
 	t.Parallel()
 
 	baseURL := startGateway(t, nil, fakeOrganizationLister{})
@@ -231,7 +161,7 @@ func TestRESTManagedClusterCreateDelete(t *testing.T) {
 		"metadata":{"name":"` + id + `","labels":{"environment":"smoke"}},
 		"spec":{"hub_accepts_client":true}
 	}`
-	resp, err := client.Post(baseURL+"/api/ai-grid/v1/managed_clusters", "application/json", strings.NewReader(createBody))
+	resp, err := client.Post(baseURL+"/api/v1/clusters", "application/json", strings.NewReader(createBody))
 	if err != nil {
 		t.Fatalf("POST create: %v", err)
 	}
@@ -247,12 +177,12 @@ func TestRESTManagedClusterCreateDelete(t *testing.T) {
 		t.Fatalf("create body missing id: %s", created)
 	}
 
-	got := mustGET(t, client, baseURL+"/api/ai-grid/v1/managed_clusters/"+id)
+	got := mustGET(t, client, baseURL+"/api/v1/clusters/"+id)
 	if !strings.Contains(got, `"environment"`) || !strings.Contains(got, `"smoke"`) {
 		t.Fatalf("get after create = %s", got)
 	}
 
-	delReq, err := http.NewRequest(http.MethodDelete, baseURL+"/api/ai-grid/v1/managed_clusters/"+id, nil)
+	delReq, err := http.NewRequest(http.MethodDelete, baseURL+"/api/v1/clusters/"+id, nil)
 	if err != nil {
 		t.Fatalf("new delete request: %v", err)
 	}
@@ -266,7 +196,7 @@ func TestRESTManagedClusterCreateDelete(t *testing.T) {
 		t.Fatalf("delete status = %d body = %s", delResp.StatusCode, body)
 	}
 
-	missing, err := client.Get(baseURL + "/api/ai-grid/v1/managed_clusters/" + id)
+	missing, err := client.Get(baseURL + "/api/v1/clusters/" + id)
 	if err != nil {
 		t.Fatalf("GET after delete: %v", err)
 	}
@@ -295,14 +225,8 @@ func startGateway(t *testing.T, objects []runtime.Object, orgs fakeOrganizationL
 	if err != nil {
 		t.Fatalf("build AiGrid server: %v", err)
 	}
-	managedClustersServer, err := servers.NewManagedClustersServer().
-		SetDynamicClient(dynamicClient).
-		Build()
-	if err != nil {
-		t.Fatalf("build ManagedClusters server: %v", err)
-	}
 	clustersServer, err := servers.NewClustersServer().
-		SetManagedClusters(managedClustersServer).
+		SetDynamicClient(dynamicClient).
 		Build()
 	if err != nil {
 		t.Fatalf("build Clusters server: %v", err)
@@ -316,10 +240,9 @@ func startGateway(t *testing.T, objects []runtime.Object, orgs fakeOrganizationL
 
 	ctx := context.Background()
 	gateway, err := restgateway.New(ctx, "127.0.0.1:0", restgateway.Servers{
-		AiGrid:          aiGridServer,
-		ManagedClusters: managedClustersServer,
-		Clusters:        clustersServer,
-		Tenants:         tenantsServer,
+		AiGrid:   aiGridServer,
+		Clusters: clustersServer,
+		Tenants:  tenantsServer,
 	})
 	if err != nil {
 		t.Fatalf("restgateway.New: %v", err)

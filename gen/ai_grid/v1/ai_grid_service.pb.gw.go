@@ -79,7 +79,7 @@ func RegisterAiGridHandlerServer(ctx context.Context, mux *runtime.ServeMux, ser
 		var stream runtime.ServerTransportStream
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/ai_grid.v1.AiGrid/Ping", runtime.WithHTTPPathPattern("/api/ai-grid/v1/ping"))
+		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/ai_grid.v1.AiGrid/Ping", runtime.WithHTTPPathPattern("/api/v1/ping"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -137,7 +137,7 @@ func RegisterAiGridHandlerClient(ctx context.Context, mux *runtime.ServeMux, cli
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/ai_grid.v1.AiGrid/Ping", runtime.WithHTTPPathPattern("/api/ai-grid/v1/ping"))
+		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/ai_grid.v1.AiGrid/Ping", runtime.WithHTTPPathPattern("/api/v1/ping"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -154,7 +154,7 @@ func RegisterAiGridHandlerClient(ctx context.Context, mux *runtime.ServeMux, cli
 }
 
 var (
-	pattern_AiGrid_Ping_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"api", "ai-grid", "v1", "ping"}, ""))
+	pattern_AiGrid_Ping_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"api", "v1", "ping"}, ""))
 )
 
 var (

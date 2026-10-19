@@ -79,7 +79,7 @@ func RegisterTenantsHandlerServer(ctx context.Context, mux *runtime.ServeMux, se
 		var stream runtime.ServerTransportStream
 		ctx = grpc.NewContextWithServerTransportStream(ctx, &stream)
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/ai_grid.v1.Tenants/List", runtime.WithHTTPPathPattern("/api/ai-grid/v1/tenants"))
+		annotatedContext, err := runtime.AnnotateIncomingContext(ctx, mux, req, "/ai_grid.v1.Tenants/List", runtime.WithHTTPPathPattern("/api/v1/tenants"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -137,7 +137,7 @@ func RegisterTenantsHandlerClient(ctx context.Context, mux *runtime.ServeMux, cl
 		ctx, cancel := context.WithCancel(req.Context())
 		defer cancel()
 		inboundMarshaler, outboundMarshaler := runtime.MarshalerForRequest(mux, req)
-		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/ai_grid.v1.Tenants/List", runtime.WithHTTPPathPattern("/api/ai-grid/v1/tenants"))
+		annotatedContext, err := runtime.AnnotateContext(ctx, mux, req, "/ai_grid.v1.Tenants/List", runtime.WithHTTPPathPattern("/api/v1/tenants"))
 		if err != nil {
 			runtime.HTTPError(ctx, mux, outboundMarshaler, w, req, err)
 			return
@@ -154,7 +154,7 @@ func RegisterTenantsHandlerClient(ctx context.Context, mux *runtime.ServeMux, cl
 }
 
 var (
-	pattern_Tenants_List_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"api", "ai-grid", "v1", "tenants"}, ""))
+	pattern_Tenants_List_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"api", "v1", "tenants"}, ""))
 )
 
 var (

@@ -11,7 +11,7 @@ set -euo pipefail
 
 addr="${GRPC_ADDR:-localhost:8080}"
 name="${NAME:-ai-grid-crud-demo}"
-svc="ai_grid.v1.ManagedClusters"
+svc="ai_grid.v1.Clusters"
 
 if ! command -v grpcurl >/dev/null 2>&1; then
   echo "grpcurl is required" >&2

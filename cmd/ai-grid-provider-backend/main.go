@@ -49,15 +49,8 @@ func main() {
 		fmt.Fprintf(os.Stderr, "build AiGrid server: %v\n", err)
 		os.Exit(1)
 	}
-	managedClustersServer, err := servers.NewManagedClustersServer().
-		SetDynamicClient(kubeClient).
-		Build()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "build ManagedClusters server: %v\n", err)
-		os.Exit(1)
-	}
 	clustersServer, err := servers.NewClustersServer().
-		SetManagedClusters(managedClustersServer).
+		SetDynamicClient(kubeClient).
 		Build()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "build Clusters server: %v\n", err)
@@ -79,7 +72,6 @@ func main() {
 
 	grpcServer := grpc.NewServer()
 	aigridv1.RegisterAiGridServer(grpcServer, aiGridServer)
-	aigridv1.RegisterManagedClustersServer(grpcServer, managedClustersServer)
 	aigridv1.RegisterClustersServer(grpcServer, clustersServer)
 	aigridv1.RegisterTenantsServer(grpcServer, tenantsServer)
 
@@ -92,10 +84,9 @@ func main() {
 	defer stop()
 
 	gateway, err := restgateway.New(ctx, *httpAddress, restgateway.Servers{
-		AiGrid:          aiGridServer,
-		ManagedClusters: managedClustersServer,
-		Clusters:        clustersServer,
-		Tenants:         tenantsServer,
+		AiGrid:   aiGridServer,
+		Clusters: clustersServer,
+		Tenants:  tenantsServer,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "REST gateway: %v\n", err)

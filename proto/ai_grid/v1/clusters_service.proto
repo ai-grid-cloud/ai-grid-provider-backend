@@ -2,8 +2,9 @@ syntax = "proto3";
 
 package ai_grid.v1;
 
-import "ai_grid/v1/cluster_type.proto";
+import "ai_grid/v1/managed_cluster_type.proto";
 import "google/api/annotations.proto";
+import "google/protobuf/field_mask.proto";
 
 option go_package = "github.com/osac-project/ai-grid-provider-backend/gen/ai_grid/v1;aigridv1";
 
@@ -14,6 +15,12 @@ message ClustersListRequest {
   // Maximum number of results to be returned by the server. When not specified all
   // the results will be returned.
   optional int32 limit = 2;
+
+  // Filter criteria (CEL). Empty means no filter. Not evaluated yet.
+  optional string filter = 3;
+
+  // Order criteria. Empty means undefined order. Not evaluated yet.
+  optional string order = 4;
 }
 
 message ClustersListResponse {
@@ -23,39 +30,74 @@ message ClustersListResponse {
   // Total number of items that match the search criteria.
   int32 total = 2;
 
-  // List of GridCluster presentation objects.
-  repeated GridCluster items = 3;
+  // List of results.
+  repeated ManagedCluster items = 3;
+}
+
+message ClustersGetRequest {
+  string id = 1;
+}
+
+message ClustersGetResponse {
+  ManagedCluster object = 1;
+}
+
+message ClustersCreateRequest {
+  ManagedCluster object = 1;
+}
+
+message ClustersCreateResponse {
+  ManagedCluster object = 1;
 }
 
 message ClustersUpdateRequest {
-  // Cluster name (path).
-  string name = 1;
+  ManagedCluster object = 1;
+  google.protobuf.FieldMask update_mask = 2;
 
-  // Enroll body: only literal true is accepted (PoC enrollClusterSchema).
-  optional bool ai_grid_enabled = 2;
+  // Lock enables optimistic locking against metadata.version. Not enforced yet.
+  bool lock = 3;
 }
 
 message ClustersUpdateResponse {
-  GridCluster object = 1;
+  ManagedCluster object = 1;
 }
 
-// Console-facing cluster inventory and enroll surface.
-// Backed by hub ManagedClusters; Create/Delete remain on ManagedClusters.
+message ClustersDeleteRequest {
+  string id = 1;
+}
+
+message ClustersDeleteResponse {}
+
+// Hub-side ACM/OCM ManagedCluster CRUD. Does not provision spoke clusters.
 service Clusters {
   rpc List(ClustersListRequest) returns (ClustersListResponse) {
+    option (google.api.http) = {get: "/api/v1/clusters"};
+  }
+
+  rpc Get(ClustersGetRequest) returns (ClustersGetResponse) {
     option (google.api.http) = {
-      get: "/api/ai-grid/v1/clusters"
-      // Bare array matches PoC GET /api/clusters → GridCluster[].
-      response_body: "items"
+      get: "/api/v1/clusters/{id}"
+      response_body: "object"
     };
   }
 
-  // Enroll: PATCH with { "ai_grid_enabled": true } (JSON camelCase aiGridEnabled also accepted on unmarshal).
-  rpc Update(ClustersUpdateRequest) returns (ClustersUpdateResponse) {
+  rpc Create(ClustersCreateRequest) returns (ClustersCreateResponse) {
     option (google.api.http) = {
-      patch: "/api/ai-grid/v1/clusters/{name}"
-      body: "*"
+      post: "/api/v1/clusters"
+      body: "object"
       response_body: "object"
     };
+  }
+
+  rpc Update(ClustersUpdateRequest) returns (ClustersUpdateResponse) {
+    option (google.api.http) = {
+      patch: "/api/v1/clusters/{object.id}"
+      body: "object"
+      response_body: "object"
+    };
+  }
+
+  rpc Delete(ClustersDeleteRequest) returns (ClustersDeleteResponse) {
+    option (google.api.http) = {delete: "/api/v1/clusters/{id}"};
   }
 }

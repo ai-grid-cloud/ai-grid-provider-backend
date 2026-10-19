@@ -25,10 +25,9 @@ var openAPIFS embed.FS
 
 // Servers are the gRPC service implementations exposed over HTTP.
 type Servers struct {
-	AiGrid          aigridv1.AiGridServer
-	ManagedClusters aigridv1.ManagedClustersServer
-	Clusters        aigridv1.ClustersServer
-	Tenants         aigridv1.TenantsServer
+	AiGrid   aigridv1.AiGridServer
+	Clusters aigridv1.ClustersServer
+	Tenants  aigridv1.TenantsServer
 }
 
 // Server is the HTTP REST gateway + Swagger UI listener.
@@ -43,8 +42,7 @@ func New(ctx context.Context, address string, servers Servers) (*Server, error) 
 	mux := runtime.NewServeMux(
 		runtime.WithMarshalerOption(runtime.MIMEWildcard, &runtime.JSONPb{
 			MarshalOptions: protojson.MarshalOptions{
-				UseProtoNames: true,
-				// Emit defaults so PoC-shaped GridCluster always includes false booleans.
+				UseProtoNames:   true,
 				EmitUnpopulated: true,
 			},
 			UnmarshalOptions: protojson.UnmarshalOptions{
@@ -55,9 +53,6 @@ func New(ctx context.Context, address string, servers Servers) (*Server, error) 
 
 	if err := aigridv1.RegisterAiGridHandlerServer(ctx, mux, servers.AiGrid); err != nil {
 		return nil, fmt.Errorf("register AiGrid HTTP handlers: %w", err)
-	}
-	if err := aigridv1.RegisterManagedClustersHandlerServer(ctx, mux, servers.ManagedClusters); err != nil {
-		return nil, fmt.Errorf("register ManagedClusters HTTP handlers: %w", err)
 	}
 	if err := aigridv1.RegisterClustersHandlerServer(ctx, mux, servers.Clusters); err != nil {
 		return nil, fmt.Errorf("register Clusters HTTP handlers: %w", err)

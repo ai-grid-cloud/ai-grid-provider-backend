@@ -7,20 +7,18 @@ Management (OCM)/RHACM `ManagedCluster` resources via the Kubernetes API
 The current API includes:
 
 - `ai_grid.v1.AiGrid/Ping`
-- `ai_grid.v1.ManagedClusters/List`
-- `ai_grid.v1.ManagedClusters/Get`
-- `ai_grid.v1.ManagedClusters/Create`
-- `ai_grid.v1.ManagedClusters/Update`
-- `ai_grid.v1.ManagedClusters/Delete`
-- `ai_grid.v1.Clusters/List` (PoC-shaped GridCluster list)
-- `ai_grid.v1.Clusters/Update` (enroll: `ai_grid_enabled=true`)
+- `ai_grid.v1.Clusters/List`
+- `ai_grid.v1.Clusters/Get`
+- `ai_grid.v1.Clusters/Create`
+- `ai_grid.v1.Clusters/Update`
+- `ai_grid.v1.Clusters/Delete`
 - `ai_grid.v1.Tenants/List`
 
 REST (grpc-gateway) and Swagger UI are also exposed on HTTP `:8081`:
 
 - Swagger UI: `http://localhost:8081/docs/`
 - OpenAPI (Swagger 2.0): `http://localhost:8081/openapi.json`
-- REST routes: `/api/ai-grid/v1/ping`, `/api/ai-grid/v1/managed_clusters`, `/api/ai-grid/v1/clusters`, `/api/ai-grid/v1/tenants`
+- REST routes: `/api/v1/ping`, `/api/v1/clusters`, `/api/v1/tenants`
 
 Regenerate protobuf, gateway stubs, and OpenAPI with `make generate` (requires [buf](https://buf.build)).
 
@@ -151,35 +149,26 @@ List available gRPC services:
 grpcurl -plaintext localhost:8080 list
 ```
 
-Call the ManagedCluster API (list / get / create / update / delete):
+Call the Clusters API (hub ManagedCluster list / get / create / update / delete):
 
 ```sh
 grpcurl -plaintext -d '{}' localhost:8080 \
-  ai_grid.v1.ManagedClusters/List
+  ai_grid.v1.Clusters/List
 
 grpcurl -plaintext -d '{"id":"playground-east"}' localhost:8080 \
-  ai_grid.v1.ManagedClusters/Get
+  ai_grid.v1.Clusters/Get
 
 grpcurl -plaintext -d '{"object":{"id":"demo-cluster","metadata":{"name":"demo-cluster","labels":{"environment":"dev"}},"spec":{"hub_accepts_client":true}}}' \
-  localhost:8080 ai_grid.v1.ManagedClusters/Create
+  localhost:8080 ai_grid.v1.Clusters/Create
 
 grpcurl -plaintext -d '{"object":{"id":"demo-cluster","metadata":{"labels":{"ai-grid/enabled":"true"}},"spec":{"hub_accepts_client":true}}}' \
-  localhost:8080 ai_grid.v1.ManagedClusters/Update
+  localhost:8080 ai_grid.v1.Clusters/Update
 
 grpcurl -plaintext -d '{"id":"demo-cluster"}' localhost:8080 \
-  ai_grid.v1.ManagedClusters/Delete
+  ai_grid.v1.Clusters/Delete
 ```
 
-REST equivalents use `/api/ai-grid/v1/managed_clusters` (GET list, GET/`PATCH`/`DELETE` by id, POST create).
-
-Console Clusters page (PoC-shaped flat `GridCluster` list + enroll):
-
-```bash
-curl -sS http://localhost:8081/api/ai-grid/v1/clusters
-curl -sS -X PATCH http://localhost:8081/api/ai-grid/v1/clusters/site4 \
-  -H 'Content-Type: application/json' \
-  -d '{"ai_grid_enabled":true}'
-```
+REST equivalents use `/api/v1/clusters` (GET list, GET/`PATCH`/`DELETE` by id, POST create).
 Objects use OSAC shape: `id` + `metadata` + `spec` + `status`.
 
 Call the tenant API:
@@ -319,7 +308,7 @@ proto/ai_grid/v1/                per-resource *_type.proto / *_service.proto + m
 gen/ai_grid/v1/                  generated protobuf, gRPC, and gateway code
 docs/openapi/                    generated OpenAPI (Swagger 2.0) JSON
 internal/servers/                Per-resource gRPC servers (OSAC-style builders)
-internal/servers/managed_clusters_server.go Kubernetes-backed cluster API
+internal/servers/clusters_server.go         Kubernetes-backed Clusters API
 internal/servers/tenants_server.go Keycloak-backed tenant API
 internal/keycloak/               Keycloak Admin API client
 internal/restgateway/            HTTP gateway + Swagger UI

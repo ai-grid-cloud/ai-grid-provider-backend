@@ -49,7 +49,7 @@ func TestPing(t *testing.T) {
 	}
 }
 
-func TestListManagedClusters(t *testing.T) {
+func TestListClusters(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -139,9 +139,9 @@ func TestListManagedClusters(t *testing.T) {
 			if tc.reactor != nil {
 				tc.reactor(client)
 			}
-			server := mustManagedClustersServer(t, client)
+			server := mustClustersServer(t, client)
 
-			response, err := server.List(context.Background(), &aigridv1.ManagedClustersListRequest{
+			response, err := server.List(context.Background(), &aigridv1.ClustersListRequest{
 				Offset: tc.offset,
 				Limit:  tc.limit,
 			})
@@ -189,7 +189,7 @@ func TestListManagedClusters(t *testing.T) {
 	}
 }
 
-func TestGetManagedCluster(t *testing.T) {
+func TestGetCluster(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -224,8 +224,8 @@ func TestGetManagedCluster(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			server := mustManagedClustersServer(t, newManagedClusterClient(tc.objects...))
-			got, err := server.Get(context.Background(), &aigridv1.ManagedClustersGetRequest{Id: tc.reqID})
+			server := mustClustersServer(t, newManagedClusterClient(tc.objects...))
+			got, err := server.Get(context.Background(), &aigridv1.ClustersGetRequest{Id: tc.reqID})
 			if tc.wantErr != codes.OK {
 				assertGRPCCode(t, err, tc.wantErr)
 				return
@@ -246,13 +246,13 @@ func TestGetManagedCluster(t *testing.T) {
 	}
 }
 
-func TestCreateManagedCluster(t *testing.T) {
+func TestCreateCluster(t *testing.T) {
 	t.Parallel()
 
 	t.Run("creates cluster", func(t *testing.T) {
 		t.Parallel()
-		server := mustManagedClustersServer(t, newManagedClusterClient())
-		got, err := server.Create(context.Background(), &aigridv1.ManagedClustersCreateRequest{
+		server := mustClustersServer(t, newManagedClusterClient())
+		got, err := server.Create(context.Background(), &aigridv1.ClustersCreateRequest{
 			Object: &aigridv1.ManagedCluster{
 				Id: "new-cluster",
 				Metadata: &aigridv1.Metadata{
@@ -278,8 +278,8 @@ func TestCreateManagedCluster(t *testing.T) {
 
 	t.Run("already exists", func(t *testing.T) {
 		t.Parallel()
-		server := mustManagedClustersServer(t, newManagedClusterClient(managedCluster("dup", nil, true)))
-		_, err := server.Create(context.Background(), &aigridv1.ManagedClustersCreateRequest{
+		server := mustClustersServer(t, newManagedClusterClient(managedCluster("dup", nil, true)))
+		_, err := server.Create(context.Background(), &aigridv1.ClustersCreateRequest{
 			Object: &aigridv1.ManagedCluster{
 				Id:   "dup",
 				Spec: &aigridv1.ManagedClusterSpec{HubAcceptsClient: true},
@@ -290,21 +290,21 @@ func TestCreateManagedCluster(t *testing.T) {
 
 	t.Run("nil object", func(t *testing.T) {
 		t.Parallel()
-		server := mustManagedClustersServer(t, newManagedClusterClient())
-		_, err := server.Create(context.Background(), &aigridv1.ManagedClustersCreateRequest{})
+		server := mustClustersServer(t, newManagedClusterClient())
+		_, err := server.Create(context.Background(), &aigridv1.ClustersCreateRequest{})
 		assertGRPCCode(t, err, codes.InvalidArgument)
 	})
 }
 
-func TestUpdateManagedCluster(t *testing.T) {
+func TestUpdateCluster(t *testing.T) {
 	t.Parallel()
 
 	t.Run("merges labels and sets hubAcceptsClient", func(t *testing.T) {
 		t.Parallel()
-		server := mustManagedClustersServer(t, newManagedClusterClient(
+		server := mustClustersServer(t, newManagedClusterClient(
 			managedCluster("cluster-a", map[string]string{"environment": "production", "keep": "yes"}, true),
 		))
-		got, err := server.Update(context.Background(), &aigridv1.ManagedClustersUpdateRequest{
+		got, err := server.Update(context.Background(), &aigridv1.ClustersUpdateRequest{
 			Object: &aigridv1.ManagedCluster{
 				Id: "cluster-a",
 				Metadata: &aigridv1.Metadata{
@@ -333,10 +333,10 @@ func TestUpdateManagedCluster(t *testing.T) {
 
 	t.Run("field mask labels only", func(t *testing.T) {
 		t.Parallel()
-		server := mustManagedClustersServer(t, newManagedClusterClient(
+		server := mustClustersServer(t, newManagedClusterClient(
 			managedCluster("cluster-a", map[string]string{"environment": "production"}, true),
 		))
-		got, err := server.Update(context.Background(), &aigridv1.ManagedClustersUpdateRequest{
+		got, err := server.Update(context.Background(), &aigridv1.ClustersUpdateRequest{
 			Object: &aigridv1.ManagedCluster{
 				Id: "cluster-a",
 				Metadata: &aigridv1.Metadata{
@@ -359,10 +359,10 @@ func TestUpdateManagedCluster(t *testing.T) {
 
 	t.Run("empty labels leaves existing labels", func(t *testing.T) {
 		t.Parallel()
-		server := mustManagedClustersServer(t, newManagedClusterClient(
+		server := mustClustersServer(t, newManagedClusterClient(
 			managedCluster("cluster-a", map[string]string{"environment": "production"}, true),
 		))
-		got, err := server.Update(context.Background(), &aigridv1.ManagedClustersUpdateRequest{
+		got, err := server.Update(context.Background(), &aigridv1.ClustersUpdateRequest{
 			Object: &aigridv1.ManagedCluster{
 				Id:   "cluster-a",
 				Spec: &aigridv1.ManagedClusterSpec{HubAcceptsClient: true},
@@ -378,8 +378,8 @@ func TestUpdateManagedCluster(t *testing.T) {
 
 	t.Run("not found", func(t *testing.T) {
 		t.Parallel()
-		server := mustManagedClustersServer(t, newManagedClusterClient())
-		_, err := server.Update(context.Background(), &aigridv1.ManagedClustersUpdateRequest{
+		server := mustClustersServer(t, newManagedClusterClient())
+		_, err := server.Update(context.Background(), &aigridv1.ClustersUpdateRequest{
 			Object: &aigridv1.ManagedCluster{
 				Id:   "missing",
 				Spec: &aigridv1.ManagedClusterSpec{HubAcceptsClient: true},
@@ -389,24 +389,24 @@ func TestUpdateManagedCluster(t *testing.T) {
 	})
 }
 
-func TestDeleteManagedCluster(t *testing.T) {
+func TestDeleteCluster(t *testing.T) {
 	t.Parallel()
 
 	t.Run("deletes existing", func(t *testing.T) {
 		t.Parallel()
-		server := mustManagedClustersServer(t, newManagedClusterClient(managedCluster("cluster-a", nil, true)))
-		_, err := server.Delete(context.Background(), &aigridv1.ManagedClustersDeleteRequest{Id: "cluster-a"})
+		server := mustClustersServer(t, newManagedClusterClient(managedCluster("cluster-a", nil, true)))
+		_, err := server.Delete(context.Background(), &aigridv1.ClustersDeleteRequest{Id: "cluster-a"})
 		if err != nil {
 			t.Fatalf("Delete() error = %v", err)
 		}
-		_, err = server.Get(context.Background(), &aigridv1.ManagedClustersGetRequest{Id: "cluster-a"})
+		_, err = server.Get(context.Background(), &aigridv1.ClustersGetRequest{Id: "cluster-a"})
 		assertGRPCCode(t, err, codes.NotFound)
 	})
 
 	t.Run("not found", func(t *testing.T) {
 		t.Parallel()
-		server := mustManagedClustersServer(t, newManagedClusterClient())
-		_, err := server.Delete(context.Background(), &aigridv1.ManagedClustersDeleteRequest{Id: "missing"})
+		server := mustClustersServer(t, newManagedClusterClient())
+		_, err := server.Delete(context.Background(), &aigridv1.ClustersDeleteRequest{Id: "missing"})
 		assertGRPCCode(t, err, codes.NotFound)
 	})
 }
@@ -515,9 +515,9 @@ func (f fakeOrganizationLister) ListOrganizations(context.Context) ([]keycloak.O
 	return f.orgs, nil
 }
 
-func mustManagedClustersServer(t *testing.T, client *fake.FakeDynamicClient) *ManagedClustersServer {
+func mustClustersServer(t *testing.T, client *fake.FakeDynamicClient) *ClustersServer {
 	t.Helper()
-	server, err := NewManagedClustersServer().SetDynamicClient(client).Build()
+	server, err := NewClustersServer().SetDynamicClient(client).Build()
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}

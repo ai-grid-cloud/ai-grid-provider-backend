@@ -20,19 +20,23 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	Clusters_List_FullMethodName   = "/ai_grid.v1.Clusters/List"
+	Clusters_Get_FullMethodName    = "/ai_grid.v1.Clusters/Get"
+	Clusters_Create_FullMethodName = "/ai_grid.v1.Clusters/Create"
 	Clusters_Update_FullMethodName = "/ai_grid.v1.Clusters/Update"
+	Clusters_Delete_FullMethodName = "/ai_grid.v1.Clusters/Delete"
 )
 
 // ClustersClient is the client API for Clusters service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// Console-facing cluster inventory and enroll surface.
-// Backed by hub ManagedClusters; Create/Delete remain on ManagedClusters.
+// Hub-side ACM/OCM ManagedCluster CRUD. Does not provision spoke clusters.
 type ClustersClient interface {
 	List(ctx context.Context, in *ClustersListRequest, opts ...grpc.CallOption) (*ClustersListResponse, error)
-	// Enroll: PATCH with { "ai_grid_enabled": true } (JSON camelCase aiGridEnabled also accepted on unmarshal).
+	Get(ctx context.Context, in *ClustersGetRequest, opts ...grpc.CallOption) (*ClustersGetResponse, error)
+	Create(ctx context.Context, in *ClustersCreateRequest, opts ...grpc.CallOption) (*ClustersCreateResponse, error)
 	Update(ctx context.Context, in *ClustersUpdateRequest, opts ...grpc.CallOption) (*ClustersUpdateResponse, error)
+	Delete(ctx context.Context, in *ClustersDeleteRequest, opts ...grpc.CallOption) (*ClustersDeleteResponse, error)
 }
 
 type clustersClient struct {
@@ -53,6 +57,26 @@ func (c *clustersClient) List(ctx context.Context, in *ClustersListRequest, opts
 	return out, nil
 }
 
+func (c *clustersClient) Get(ctx context.Context, in *ClustersGetRequest, opts ...grpc.CallOption) (*ClustersGetResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ClustersGetResponse)
+	err := c.cc.Invoke(ctx, Clusters_Get_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *clustersClient) Create(ctx context.Context, in *ClustersCreateRequest, opts ...grpc.CallOption) (*ClustersCreateResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ClustersCreateResponse)
+	err := c.cc.Invoke(ctx, Clusters_Create_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *clustersClient) Update(ctx context.Context, in *ClustersUpdateRequest, opts ...grpc.CallOption) (*ClustersUpdateResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ClustersUpdateResponse)
@@ -63,16 +87,27 @@ func (c *clustersClient) Update(ctx context.Context, in *ClustersUpdateRequest, 
 	return out, nil
 }
 
+func (c *clustersClient) Delete(ctx context.Context, in *ClustersDeleteRequest, opts ...grpc.CallOption) (*ClustersDeleteResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ClustersDeleteResponse)
+	err := c.cc.Invoke(ctx, Clusters_Delete_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ClustersServer is the server API for Clusters service.
 // All implementations must embed UnimplementedClustersServer
 // for forward compatibility.
 //
-// Console-facing cluster inventory and enroll surface.
-// Backed by hub ManagedClusters; Create/Delete remain on ManagedClusters.
+// Hub-side ACM/OCM ManagedCluster CRUD. Does not provision spoke clusters.
 type ClustersServer interface {
 	List(context.Context, *ClustersListRequest) (*ClustersListResponse, error)
-	// Enroll: PATCH with { "ai_grid_enabled": true } (JSON camelCase aiGridEnabled also accepted on unmarshal).
+	Get(context.Context, *ClustersGetRequest) (*ClustersGetResponse, error)
+	Create(context.Context, *ClustersCreateRequest) (*ClustersCreateResponse, error)
 	Update(context.Context, *ClustersUpdateRequest) (*ClustersUpdateResponse, error)
+	Delete(context.Context, *ClustersDeleteRequest) (*ClustersDeleteResponse, error)
 	mustEmbedUnimplementedClustersServer()
 }
 
@@ -86,8 +121,17 @@ type UnimplementedClustersServer struct{}
 func (UnimplementedClustersServer) List(context.Context, *ClustersListRequest) (*ClustersListResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method List not implemented")
 }
+func (UnimplementedClustersServer) Get(context.Context, *ClustersGetRequest) (*ClustersGetResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Get not implemented")
+}
+func (UnimplementedClustersServer) Create(context.Context, *ClustersCreateRequest) (*ClustersCreateResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Create not implemented")
+}
 func (UnimplementedClustersServer) Update(context.Context, *ClustersUpdateRequest) (*ClustersUpdateResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Update not implemented")
+}
+func (UnimplementedClustersServer) Delete(context.Context, *ClustersDeleteRequest) (*ClustersDeleteResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Delete not implemented")
 }
 func (UnimplementedClustersServer) mustEmbedUnimplementedClustersServer() {}
 func (UnimplementedClustersServer) testEmbeddedByValue()                  {}
@@ -128,6 +172,42 @@ func _Clusters_List_Handler(srv interface{}, ctx context.Context, dec func(inter
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Clusters_Get_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ClustersGetRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ClustersServer).Get(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Clusters_Get_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ClustersServer).Get(ctx, req.(*ClustersGetRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Clusters_Create_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ClustersCreateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ClustersServer).Create(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Clusters_Create_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ClustersServer).Create(ctx, req.(*ClustersCreateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Clusters_Update_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ClustersUpdateRequest)
 	if err := dec(in); err != nil {
@@ -146,6 +226,24 @@ func _Clusters_Update_Handler(srv interface{}, ctx context.Context, dec func(int
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Clusters_Delete_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ClustersDeleteRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ClustersServer).Delete(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Clusters_Delete_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ClustersServer).Delete(ctx, req.(*ClustersDeleteRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Clusters_ServiceDesc is the grpc.ServiceDesc for Clusters service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -158,8 +256,20 @@ var Clusters_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Clusters_List_Handler,
 		},
 		{
+			MethodName: "Get",
+			Handler:    _Clusters_Get_Handler,
+		},
+		{
+			MethodName: "Create",
+			Handler:    _Clusters_Create_Handler,
+		},
+		{
 			MethodName: "Update",
 			Handler:    _Clusters_Update_Handler,
+		},
+		{
+			MethodName: "Delete",
+			Handler:    _Clusters_Delete_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
