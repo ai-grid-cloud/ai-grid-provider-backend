@@ -204,15 +204,15 @@ go test ./...
 The repository also provides standard developer targets (`make help` lists them):
 
 ```sh
-make build-bin        # build bin/ai-grid-provider-backend
+make build            # build bin/ai-grid-provider-backend
 make unit             # unit tests (excludes Kind integration)
 make smoke            # live API smoke (needs make run)
 make lint             # gofmt check and go vet; uses golangci-lint when installed
-make verify           # build-bin, unit, and lint
+make verify           # build, unit, and lint
 make run              # run the API locally against your kubeconfig
-make build            # build container image (Podman); alias: image
+make image            # build container image (Podman); alias: container
 make push             # push container image to Quay
-make build-and-push   # build + push
+make build-and-push   # image + push
 make kind-test        # full Podman/Kind integration test
 ```
 
@@ -273,17 +273,18 @@ ManagedClusters when the ACM/OCM CRD is present.
 
 Default image: [`quay.io/rh-ee-rjjohnso/ai-grid-provider-backend`](https://quay.io/repository/rh-ee-rjjohnso/ai-grid-provider-backend).
 
-CI (`.github/workflows/ci.yaml`) on pushes to `main` / `development` runs
-checks + unit tests, then builds and pushes to Quay (`latest` on `main`,
+CI (`.github/workflows/ci.yaml`) runs the Check job on pull requests and on
+pushes to `main` / `development` (build, lint, unit tests, generated-file
+verify). Image build/push to Quay runs only on push (`latest` on `main`,
 `development` on `development`, plus `sha-*`). Set repository secrets
 `QUAY_USERNAME` and `QUAY_PASSWORD`.
 
 Publish locally (Quay login required once: `podman login quay.io`):
 
 ```sh
-make build              # build linux/amd64 → quay.io/rh-ee-rjjohnso/ai-grid-provider-backend:latest
+make image              # build linux/amd64 → quay.io/rh-ee-rjjohnso/ai-grid-provider-backend:latest
 make push               # push that tag
-make build-and-push     # build + push
+make build-and-push     # image + push
 # TAG=dev make build-and-push
 # PLATFORM=linux/arm64 make build-and-push   # only if the cluster is arm64
 ```

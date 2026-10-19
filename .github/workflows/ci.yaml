@@ -1,6 +1,8 @@
-# CI: lint + unit tests, then build/push the container image to Quay.
+# CI: lint + unit tests (+ generated-file check). On pushes to main/development,
+# also build and push the container image to Quay.
 #
-# Triggers on pushes to main and development (including merges).
+# pull_request: check job only (never publishes images).
+# push to main/development: check, then image.
 #
 # Required repository secrets for the image job:
 #   QUAY_USERNAME  Quay.io robot or user
@@ -10,9 +12,11 @@ name: CI
 on:
   push:
     branches: [main, development]
+  pull_request:
+    branches: [main, development]
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -22,6 +26,9 @@ env:
   GO_VERSION_FILE: go.mod
   IMAGE: quay.io/rh-ee-rjjohnso/ai-grid-provider-backend
   PLATFORM: linux/amd64
+  # Pin for reproducible CI (golangci-lint v2 matches .golangci.yml version: "2").
+  GOLANGCI_LINT_VERSION: v2.1.6
+  BUF_VERSION: "1.50.0"
 
 jobs:
   check:
@@ -38,7 +45,7 @@ jobs:
           cache-dependency-path: go.sum
 
       - name: Build binary
-        run: make build-bin
+        run: make build
 
       - name: Format check
         run: make fmt-check
@@ -49,13 +56,28 @@ jobs:
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v8
         with:
-          version: latest
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
 
       - name: Unit tests
         run: make unit
 
+      - name: Install buf
+        uses: bufbuild/buf-setup-action@v1
+        with:
+          version: ${{ env.BUF_VERSION }}
+
+      - name: Verify generated files are up to date
+        run: |
+          make generate
+          git add -N gen docs/openapi internal/restgateway/openapi || true
+          if ! git diff --exit-code -- gen docs/openapi/ai_grid.swagger.json internal/restgateway/openapi/ai_grid.swagger.json; then
+            echo "::error::Generated files are out of date. Run 'make generate' and commit the results."
+            exit 1
+          fi
+
   image:
     name: Build and push image
+    if: github.event_name == 'push'
     needs: check
     runs-on: ubuntu-latest
     steps:

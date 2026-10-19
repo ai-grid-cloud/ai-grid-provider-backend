@@ -24,7 +24,7 @@ GRPC_ADDR ?= localhost:8080
 HTTP_ADDR ?= http://localhost:8081
 
 .PHONY: help all binary build-bin build test unit smoke vet fmt-check lint verify generate \
-	image push build-and-push run \
+	image container push build-and-push run \
 	keycloak-up keycloak-down keycloak-seed \
 	prereqs kind-test clean-kind openshift-up openshift-down acm-hub-up acm-hub-down
 
@@ -37,11 +37,12 @@ all: verify
 
 ##@ Local binary
 
-build-bin: ## Build the Go binary into bin/
+build: ## Build the Go binary into bin/
 	mkdir -p $(BIN_DIR)
 	$(GO) build -buildvcs=false -trimpath -o $(BACKEND_BIN) ./cmd/ai-grid-provider-backend
 
-binary: build-bin ## Alias for build-bin
+binary: build ## Alias for build
+build-bin: build ## Deprecated alias for build
 
 # Unit packages only (skips ./integration, which needs Kind via make kind-test).
 UNIT_PKGS := $(shell $(GO) list ./... | grep -v '/integration$$')
@@ -75,14 +76,14 @@ generate: ## Regenerate protobuf, gateway stubs, and OpenAPI
 	mkdir -p internal/restgateway/openapi
 	cp docs/openapi/ai_grid.swagger.json internal/restgateway/openapi/ai_grid.swagger.json
 
-verify: build-bin unit lint ## Build binary + unit tests + lint
+verify: build unit lint ## Build binary + unit tests + lint
 
 ##@ Container image (Quay)
 
 # Build the container image with Podman (falls back to docker if podman is missing).
 # PLATFORM is os/arch (default linux/amd64). TARGETARCH is passed explicitly because
 # Podman on Apple Silicon often leaves TARGETARCH unset, producing Exec format error on OpenShift.
-build: ## Build the container image ($(IMAGE):$(TAG))
+image: ## Build the container image ($(IMAGE):$(TAG))
 	@if [[ -z "$(CONTAINER_ENGINE)" ]]; then echo "podman or docker is required" >&2; exit 1; fi
 	@target_arch="$$(echo "$(PLATFORM)" | awk -F/ '{print $$2}')"; \
 	target_os="$$(echo "$(PLATFORM)" | awk -F/ '{print $$1}')"; \
@@ -94,14 +95,14 @@ build: ## Build the container image ($(IMAGE):$(TAG))
 		-t $(IMAGE):$(TAG) \
 		-f Containerfile .
 
-image: build ## Alias for build
+container: image ## Alias for image
 
 push: ## Push $(IMAGE):$(TAG) to Quay (podman login quay.io first)
 	@if [[ -z "$(CONTAINER_ENGINE)" ]]; then echo "podman or docker is required" >&2; exit 1; fi
 	@echo "pushing $(IMAGE):$(TAG)"
 	$(CONTAINER_ENGINE) push $(IMAGE):$(TAG)
 
-build-and-push: build push ## Build the image, then push to Quay
+build-and-push: image push ## Build the image, then push to Quay
 
 ##@ Local API
 
