@@ -7,6 +7,13 @@ run:
 formatters:
   enable:
     - gofmt
+  exclusions:
+    generated: lax
+    paths:
+      - gen/
+      - third_party$
+      - builtin$
+      - examples$
 
 linters:
   default: standard
@@ -14,21 +21,20 @@ linters:
     - errorlint
     - misspell
     - nolintlint
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - std-error-handling
+    paths:
+      - gen/
+      - third_party$
+      - builtin$
+      - examples$
+    rules:
+      - linters:
+          - errcheck
+        path: _test\.go
 
 issues:
   uniq-by-line: true
-
-exclusions:
-  generated: lax
-  presets:
-    - comments
-    - std-error-handling
-  paths:
-    - gen/
-    - third_party$
-    - builtin$
-    - examples$
-  rules:
-    - linters:
-        - errcheck
-      path: _test\.go
