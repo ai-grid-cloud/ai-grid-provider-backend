@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"strconv"
 	"strings"
 
 	aigridv1 "github.com/osac-project/ai-grid-provider-backend/gen/ai_grid/v1"
@@ -168,24 +169,28 @@ func (s *ClustersServer) Update(ctx context.Context, req *aigridv1.ClustersUpdat
 		return nil, mapManagedClusterAPIError("get", id, err)
 	}
 
-	updateLabels, updateHub := updatePaths(req.GetUpdateMask(), object)
+	paths := updatePaths(req.GetUpdateMask(), object)
 
-	patchBody := map[string]interface{}{}
-	if updateLabels {
-		mergedLabels := map[string]string{}
-		for k, v := range current.GetLabels() {
-			mergedLabels[k] = v
-		}
-		if object.GetMetadata() != nil {
-			for k, v := range object.GetMetadata().GetLabels() {
-				mergedLabels[k] = v
-			}
-		}
-		patchBody["metadata"] = map[string]interface{}{
-			"labels": stringMapToInterfaceMap(mergedLabels),
-		}
+	var version int32
+	if object.GetMetadata() != nil {
+		version = object.GetMetadata().GetVersion()
 	}
-	if updateHub {
+	if req.GetLock() && version == 0 {
+		return nil, status.Error(codes.InvalidArgument, "lock requires metadata.version")
+	}
+
+	patchMeta := map[string]interface{}{}
+	if paths.labels {
+		patchMeta["labels"] = managedKeysPatch(current.GetLabels(), object.GetMetadata().GetLabels())
+	}
+	if paths.annotations {
+		patchMeta["annotations"] = managedKeysPatch(current.GetAnnotations(), object.GetMetadata().GetAnnotations())
+	}
+	patchBody := map[string]interface{}{}
+	if len(patchMeta) > 0 {
+		patchBody["metadata"] = patchMeta
+	}
+	if paths.hub {
 		hubAccepts := false
 		if object.GetSpec() != nil {
 			hubAccepts = object.GetSpec().GetHubAcceptsClient()
@@ -196,6 +201,16 @@ func (s *ClustersServer) Update(ctx context.Context, req *aigridv1.ClustersUpdat
 	}
 	if len(patchBody) == 0 {
 		return &aigridv1.ClustersUpdateResponse{Object: managedClusterFromUnstructured(*current)}, nil
+	}
+	// metadata.version is the hub resourceVersion: sent back in the merge
+	// patch, the API server rejects the write with a Conflict when it is stale.
+	if version != 0 {
+		meta, _ := patchBody["metadata"].(map[string]interface{})
+		if meta == nil {
+			meta = map[string]interface{}{}
+			patchBody["metadata"] = meta
+		}
+		meta["resourceVersion"] = strconv.FormatInt(int64(version), 10)
 	}
 
 	patchBytes, err := json.Marshal(patchBody)
@@ -225,23 +240,61 @@ func (s *ClustersServer) Delete(ctx context.Context, req *aigridv1.ClustersDelet
 	return &aigridv1.ClustersDeleteResponse{}, nil
 }
 
+type clusterUpdatePaths struct {
+	labels, annotations, hub bool
+}
+
 // updatePaths reports which mutable fields an Update changes. Without a mask
 // these are the parts the request sets: a request with no spec leaves
-// hubAcceptsClient as it is instead of setting it to false.
-func updatePaths(mask *fieldmaskpb.FieldMask, object *aigridv1.ManagedCluster) (labels, hub bool) {
+// hubAcceptsClient as it is instead of setting it to false, and empty label
+// or annotation maps leave those as they are.
+func updatePaths(mask *fieldmaskpb.FieldMask, object *aigridv1.ManagedCluster) clusterUpdatePaths {
 	if mask == nil || len(mask.GetPaths()) == 0 {
-		return object.GetMetadata() != nil, object.GetSpec() != nil
+		return clusterUpdatePaths{
+			labels:      len(object.GetMetadata().GetLabels()) > 0,
+			annotations: len(object.GetMetadata().GetAnnotations()) > 0,
+			hub:         object.GetSpec() != nil,
+		}
 	}
+	var paths clusterUpdatePaths
 	for _, path := range mask.GetPaths() {
 		p := strings.TrimPrefix(path, "object.")
 		switch {
-		case p == "metadata.labels" || p == "metadata" || strings.HasPrefix(p, "metadata.labels"):
-			labels = true
+		case p == "metadata":
+			paths.labels, paths.annotations = true, true
+		case p == "metadata.labels" || strings.HasPrefix(p, "metadata.labels."):
+			paths.labels = true
+		case p == "metadata.annotations" || strings.HasPrefix(p, "metadata.annotations."):
+			paths.annotations = true
 		case p == "spec.hub_accepts_client" || p == "spec" || strings.HasPrefix(p, "spec."):
-			hub = true
+			paths.hub = true
 		}
 	}
-	return labels, hub
+	return paths
+}
+
+// isConsoleManagedKey reports whether the console owns a label or annotation
+// key: the ai-grid/* keys and ACM's placement label "location".
+func isConsoleManagedKey(key string) bool {
+	return strings.HasPrefix(key, "ai-grid/") || key == "location"
+}
+
+// managedKeysPatch builds a JSON merge patch for a label or annotation map.
+// Every key in the request is set. For console-managed keys the request is
+// the whole set: one on the hub but missing from the request is removed, so
+// "Remove from grid" can drop ai-grid/enabled. Other keys missing from the
+// request, such as the ones ACM writes, are left as they are.
+func managedKeysPatch(current, requested map[string]string) map[string]interface{} {
+	patch := map[string]interface{}{}
+	for k := range current {
+		if _, ok := requested[k]; !ok && isConsoleManagedKey(k) {
+			patch[k] = nil
+		}
+	}
+	for k, v := range requested {
+		patch[k] = v
+	}
+	return patch
 }
 
 func validateManagedClusterID(id string) error {
@@ -262,6 +315,8 @@ func mapManagedClusterAPIError(op, id string, err error) error {
 		return status.Errorf(codes.AlreadyExists, "ManagedCluster %q already exists", id)
 	case apierrors.IsInvalid(err), apierrors.IsBadRequest(err):
 		return status.Errorf(codes.InvalidArgument, "%s ManagedCluster %q: %v", op, id, err)
+	case apierrors.IsConflict(err):
+		return status.Errorf(codes.Aborted, "%s ManagedCluster %q: the cluster changed since it was read; reload and retry", op, id)
 	case apierrors.IsForbidden(err), apierrors.IsUnauthorized(err):
 		return status.Errorf(codes.PermissionDenied, "%s ManagedCluster %q: %v", op, id, err)
 	default:
