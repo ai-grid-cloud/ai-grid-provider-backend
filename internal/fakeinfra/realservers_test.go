@@ -15,7 +15,9 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	aigridv1 "github.com/osac-project/ai-grid-provider-backend/gen/ai_grid/v1"
 	"github.com/osac-project/ai-grid-provider-backend/internal/fakeinfra/devserve"
@@ -26,6 +28,9 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -289,5 +294,79 @@ func TestRealClustersServerUpdateVersion(t *testing.T) {
 		Object: &aigridv1.ManagedCluster{Id: "site-oslo-1", Metadata: &aigridv1.Metadata{Labels: remove}}, UpdateMask: mask, Lock: true,
 	}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("Update(lock, no version) error = %v, want InvalidArgument", err)
+	}
+}
+
+// TestRealClustersServerProvisioning reads status.provisioning from the
+// ai-grid-ready Policy: fixtures keep their ai-grid/provisioned state, a
+// cluster added to the grid is Pending and then Compliant, and removing it
+// clears the state.
+func TestRealClustersServerProvisioning(t *testing.T) {
+	fx, err := hub.LoadFixtures(fixturesDir)
+	if err != nil {
+		t.Fatalf("hub.LoadFixtures() error = %v", err)
+	}
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	var mu sync.Mutex
+	clock := func() time.Time { mu.Lock(); defer mu.Unlock(); return now }
+	h, err := hub.New(fx, hub.WithLogger(slog.New(slog.DiscardHandler)), hub.WithClock(clock))
+	if err != nil {
+		t.Fatalf("hub.New() error = %v", err)
+	}
+	srv := httptest.NewServer(h.Handler())
+	t.Cleanup(srv.Close)
+	s := clustersServer(t, &rest.Config{Host: srv.URL, BearerToken: h.ServiceAccountToken()})
+	ctx := context.Background()
+
+	state := func(id string) string {
+		t.Helper()
+		got, err := s.Get(ctx, &aigridv1.ClustersGetRequest{Id: id})
+		if err != nil {
+			t.Fatalf("Get(%s) error = %v", id, err)
+		}
+		return got.GetObject().GetStatus().GetProvisioning()
+	}
+	list, err := s.List(ctx, &aigridv1.ClustersListRequest{})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	got := map[string]string{}
+	for _, c := range list.GetItems() {
+		got[c.GetId()] = c.GetStatus().GetProvisioning()
+	}
+	if got["site-paris-1"] != "Compliant" || got["site-ashburn-1"] != "NonCompliant" || got["site-oslo-1"] != "" || got["local-cluster"] != "" {
+		t.Fatalf("List() provisioning = %v", got)
+	}
+
+	mask := &fieldmaskpb.FieldMask{Paths: []string{"metadata.labels"}}
+	if _, err := s.Update(ctx, &aigridv1.ClustersUpdateRequest{
+		Object:     &aigridv1.ManagedCluster{Id: "site-oslo-1", Metadata: &aigridv1.Metadata{Labels: map[string]string{"ai-grid/enabled": "true", "location": "oslo"}}},
+		UpdateMask: mask,
+	}); err != nil {
+		t.Fatalf("Update(add) error = %v", err)
+	}
+	if p := state("site-oslo-1"); p != "Pending" {
+		t.Fatalf("after add, provisioning = %q, want Pending", p)
+	}
+	mu.Lock()
+	now = now.Add(hub.DefaultProvisionAfter)
+	mu.Unlock()
+	if p := state("site-oslo-1"); p != "Compliant" {
+		t.Fatalf("after %v, provisioning = %q, want Compliant", hub.DefaultProvisionAfter, p)
+	}
+
+	// Remove it from the grid on the hub: Update merges labels, so it can't
+	// drop one.
+	hubClient, err := dynamic.NewForConfig(&rest.Config{Host: srv.URL, BearerToken: h.ServiceAccountToken()})
+	if err != nil {
+		t.Fatalf("dynamic.NewForConfig() error = %v", err)
+	}
+	gvr := schema.GroupVersionResource{Group: hub.Group, Version: hub.Version, Resource: hub.Resource}
+	if _, err := hubClient.Resource(gvr).Patch(ctx, "site-oslo-1", types.MergePatchType,
+		[]byte(`{"metadata":{"labels":{"ai-grid/enabled":null}}}`), metav1.PatchOptions{}); err != nil {
+		t.Fatalf("Patch(remove) error = %v", err)
+	}
+	if p := state("site-oslo-1"); p != "" {
+		t.Fatalf("after remove, provisioning = %q, want empty", p)
 	}
 }
