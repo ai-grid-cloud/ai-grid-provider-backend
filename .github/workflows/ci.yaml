@@ -26,8 +26,9 @@ env:
   GO_VERSION_FILE: go.mod
   IMAGE: quay.io/rh-ee-rjjohnso/ai-grid-provider-backend
   PLATFORM: linux/amd64
-  # Pin for reproducible CI (golangci-lint v2 matches .golangci.yml version: "2").
-  GOLANGCI_LINT_VERSION: v2.1.6
+  # Pin for reproducible CI. Need >= v2.9.0 so the binary is built with Go >= 1.26
+  # (go.mod is go 1.26.3). golangci-lint rejects modules newer than its build Go.
+  GOLANGCI_LINT_VERSION: v2.12.2
   BUF_VERSION: "1.50.0"
 
 jobs:
@@ -57,6 +58,8 @@ jobs:
         uses: golangci/golangci-lint-action@v8
         with:
           version: ${{ env.GOLANGCI_LINT_VERSION }}
+          # Compile with the Go from setup-go so the linter matches go.mod (1.26.x).
+          install-mode: goinstall
 
       - name: Unit tests
         run: make unit
