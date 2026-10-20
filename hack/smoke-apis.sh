@@ -28,6 +28,25 @@ smoke_cluster_rest="ai-grid-smk-r-${smoke_suffix}"
 smoke_tenant_grpc="ai-grid-smk-g-${smoke_suffix}"
 smoke_tenant_rest="ai-grid-smk-r-${smoke_suffix}"
 
+# Resources created during smoke; deleted on EXIT even if a mid-CRUD call fails.
+cleanup_cluster_ids=()
+cleanup_tenant_ids=()
+
+smoke_cleanup() {
+  local id
+  for id in "${cleanup_cluster_ids[@]+"${cleanup_cluster_ids[@]}"}"; do
+    [[ -n "$id" ]] || continue
+    grpcurl -plaintext -d "{\"id\":\"${id}\"}" "$addr" ai_grid.v1.Clusters/Delete >/dev/null 2>&1 || true
+    curl -sS -o /dev/null -X DELETE "${http_addr}/api/v1/clusters/${id}" >/dev/null 2>&1 || true
+  done
+  for id in "${cleanup_tenant_ids[@]+"${cleanup_tenant_ids[@]}"}"; do
+    [[ -n "$id" ]] || continue
+    grpcurl -plaintext -d "{\"id\":\"${id}\"}" "$addr" ai_grid.v1.Tenants/Delete >/dev/null 2>&1 || true
+    curl -sS -o /dev/null -X DELETE "${http_addr}/api/v1/tenants/${id}" >/dev/null 2>&1 || true
+  done
+}
+trap smoke_cleanup EXIT
+
 need() { command -v "$1" >/dev/null 2>&1 || { echo "error: $1 required" >&2; exit 1; }; }
 need grpcurl
 need curl
@@ -45,6 +64,8 @@ print(${expr})
 " 2>/dev/null || true
 }
 
+# Helpers always return 0 so set -e does not abort mid-CRUD before cleanup/Delete.
+# Failures increment failed and are summarized at the end.
 call_grpc() {
   local label="$1" request="$2" method="$3" out="" ec=0
   printf '\n==> %s\n' "$label"
@@ -62,7 +83,7 @@ call_grpc() {
   printf 'fail %s\n' "$label" >&2
   failed=$((failed + 1))
   CALL_OUT=""
-  return 1
+  return 0
 }
 
 call_http() {
@@ -87,7 +108,7 @@ call_http() {
   printf 'fail %s (HTTP %s)\n' "$label" "$status" >&2
   failed=$((failed + 1))
   CALL_OUT=""
-  return 1
+  return 0
 }
 
 tenant_id_by_name() {
@@ -130,9 +151,14 @@ else
   call_grpc 'Clusters/List (limit=1)' '{"limit":1}' 'ai_grid.v1.Clusters/List'
   grpcurl -plaintext -d "{\"id\":\"${smoke_cluster_grpc}\"}" "$addr" \
     ai_grid.v1.Clusters/Delete >/dev/null 2>&1 || true
+
+  before_failed=$failed
   call_grpc 'Clusters/Create' \
     "{\"object\":{\"id\":\"${smoke_cluster_grpc}\",\"metadata\":{\"name\":\"${smoke_cluster_grpc}\",\"labels\":{\"environment\":\"smoke\"}},\"spec\":{\"hub_accepts_client\":true}}}" \
     'ai_grid.v1.Clusters/Create'
+  if (( failed == before_failed )); then
+    cleanup_cluster_ids+=("$smoke_cluster_grpc")
+  fi
   call_grpc 'Clusters/Get' "{\"id\":\"${smoke_cluster_grpc}\"}" 'ai_grid.v1.Clusters/Get'
   call_grpc 'Clusters/Update (update_mask=metadata.labels)' \
     "{\"object\":{\"id\":\"${smoke_cluster_grpc}\",\"metadata\":{\"labels\":{\"environment\":\"smoke\",\"ai-grid/enabled\":\"true\"}},\"spec\":{\"hub_accepts_client\":true}},\"update_mask\":{\"paths\":[\"metadata.labels\"]}}" \
@@ -142,8 +168,13 @@ else
   call_http 'GET /api/v1/clusters' GET '/api/v1/clusters'
   call_http 'GET /api/v1/clusters?limit=1' GET '/api/v1/clusters?limit=1'
   curl -sS -o /dev/null -X DELETE "${http_addr}/api/v1/clusters/${smoke_cluster_rest}" || true
+
+  before_failed=$failed
   call_http 'POST /api/v1/clusters' POST '/api/v1/clusters' \
     "{\"id\":\"${smoke_cluster_rest}\",\"metadata\":{\"name\":\"${smoke_cluster_rest}\",\"labels\":{\"environment\":\"smoke\"}},\"spec\":{\"hub_accepts_client\":true}}"
+  if (( failed == before_failed )); then
+    cleanup_cluster_ids+=("$smoke_cluster_rest")
+  fi
   call_http "GET /api/v1/clusters/${smoke_cluster_rest}" GET "/api/v1/clusters/${smoke_cluster_rest}"
   call_http "PATCH /api/v1/clusters/${smoke_cluster_rest}" PATCH "/api/v1/clusters/${smoke_cluster_rest}" \
     "{\"id\":\"${smoke_cluster_rest}\",\"metadata\":{\"labels\":{\"environment\":\"smoke\",\"ai-grid/enabled\":\"true\"}},\"spec\":{\"hub_accepts_client\":true}}"
@@ -164,14 +195,16 @@ else
   fi
 
   CALL_OUT=""
-  if call_grpc 'Tenants/Create' \
+  before_failed=$failed
+  call_grpc 'Tenants/Create' \
     "{\"object\":{\"metadata\":{\"name\":\"${smoke_tenant_grpc}\"},\"spec\":{\"domains\":[\"smoke.example.com\"]}}}" \
-    'ai_grid.v1.Tenants/Create'; then
+    'ai_grid.v1.Tenants/Create'
+  smoke_tenant_id=""
+  if (( failed == before_failed )); then
     smoke_tenant_id="$(json_get "$CALL_OUT" '(data.get("object") or data).get("id") or ""')"
-  else
-    smoke_tenant_id=""
   fi
   if [[ -n "$smoke_tenant_id" ]]; then
+    cleanup_tenant_ids+=("$smoke_tenant_id")
     call_grpc 'Tenants/Get' "{\"id\":\"${smoke_tenant_id}\"}" 'ai_grid.v1.Tenants/Get'
     call_grpc 'Tenants/Update (update_mask=spec.domains)' \
       "{\"object\":{\"id\":\"${smoke_tenant_id}\",\"metadata\":{\"name\":\"${smoke_tenant_grpc}\"},\"spec\":{\"domains\":[\"smoke-updated.example.com\"]}},\"update_mask\":{\"paths\":[\"spec.domains\"]}}" \
@@ -189,13 +222,15 @@ else
     curl -sS -o /dev/null -X DELETE "${http_addr}/api/v1/tenants/${prior_id}" || true
   fi
   CALL_OUT=""
-  if call_http 'POST /api/v1/tenants' POST '/api/v1/tenants' \
-    "{\"metadata\":{\"name\":\"${smoke_tenant_rest}\"},\"spec\":{\"domains\":[\"smoke-rest.example.com\"]}}"; then
+  before_failed=$failed
+  call_http 'POST /api/v1/tenants' POST '/api/v1/tenants' \
+    "{\"metadata\":{\"name\":\"${smoke_tenant_rest}\"},\"spec\":{\"domains\":[\"smoke-rest.example.com\"]}}"
+  smoke_tenant_id=""
+  if (( failed == before_failed )); then
     smoke_tenant_id="$(json_get "$CALL_OUT" 'data.get("id") or ""')"
-  else
-    smoke_tenant_id=""
   fi
   if [[ -n "$smoke_tenant_id" ]]; then
+    cleanup_tenant_ids+=("$smoke_tenant_id")
     call_http "GET /api/v1/tenants/${smoke_tenant_id}" GET "/api/v1/tenants/${smoke_tenant_id}"
     call_http "PATCH /api/v1/tenants/${smoke_tenant_id}" PATCH "/api/v1/tenants/${smoke_tenant_id}" \
       "{\"id\":\"${smoke_tenant_id}\",\"metadata\":{\"name\":\"${smoke_tenant_rest}\"},\"spec\":{\"domains\":[\"smoke-rest-updated.example.com\"]}}"

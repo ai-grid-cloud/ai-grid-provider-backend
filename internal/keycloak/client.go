@@ -60,11 +60,16 @@ type OrganizationDomain struct {
 }
 
 // Organization is a Keycloak Organization in the configured realm.
+// Extra fields (Enabled, Description, RedirectURL) are preserved through
+// GET→modify→PUT so Keycloak replacement semantics do not clear them.
 type Organization struct {
-	ID      string               `json:"id,omitempty"`
-	Name    string               `json:"name"`
-	Alias   string               `json:"alias,omitempty"`
-	Domains []OrganizationDomain `json:"domains,omitempty"`
+	ID          string               `json:"id,omitempty"`
+	Name        string               `json:"name"`
+	Alias       string               `json:"alias,omitempty"`
+	Enabled     *bool                `json:"enabled,omitempty"`
+	Description string               `json:"description,omitempty"`
+	RedirectURL string               `json:"redirectUrl,omitempty"`
+	Domains     []OrganizationDomain `json:"domains,omitempty"`
 }
 
 // APIError is a non-2xx response from the Keycloak Admin API.
@@ -158,9 +163,12 @@ func (c *Client) CreateOrganization(ctx context.Context, org Organization) (Orga
 		return Organization{}, fmt.Errorf("request Keycloak create organization: %w", err)
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return Organization{}, fmt.Errorf("read Keycloak create organization response: %w", err)
+	}
 	if resp.StatusCode/100 != 2 {
-		return Organization{}, &APIError{Op: "create organization", StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(body))}
+		return Organization{}, &APIError{Op: "create organization", StatusCode: resp.StatusCode, Body: truncateDiagnostic(body)}
 	}
 
 	id := organizationIDFromLocation(resp.Header.Get("Location"))
@@ -184,9 +192,8 @@ func (c *Client) UpdateOrganization(ctx context.Context, org Organization) (Orga
 	if err != nil {
 		return Organization{}, err
 	}
-	if org.Alias == "" {
-		org.Alias = org.Name
-	}
+	// Do not invent Alias from Name on update: Keycloak treats alias as immutable
+	// once set. Callers should pass the representation from GetOrganization.
 	payload, err := json.Marshal(org)
 	if err != nil {
 		return Organization{}, fmt.Errorf("marshal Keycloak organization: %w", err)
@@ -232,12 +239,15 @@ func (c *Client) token(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("request Keycloak token: %w", err)
 	}
 	defer tokenResponseBody.Body.Close()
+	body, err := io.ReadAll(tokenResponseBody.Body)
+	if err != nil {
+		return "", fmt.Errorf("read Keycloak token response: %w", err)
+	}
 	if tokenResponseBody.StatusCode/100 != 2 {
-		body, _ := io.ReadAll(io.LimitReader(tokenResponseBody.Body, 4096))
-		return "", fmt.Errorf("Keycloak token request returned %s: %s", tokenResponseBody.Status, strings.TrimSpace(string(body)))
+		return "", fmt.Errorf("Keycloak token request returned %s: %s", tokenResponseBody.Status, truncateDiagnostic(body))
 	}
 	var token tokenResponse
-	if err := json.NewDecoder(tokenResponseBody.Body).Decode(&token); err != nil {
+	if err := json.Unmarshal(body, &token); err != nil {
 		return "", fmt.Errorf("decode Keycloak token: %w", err)
 	}
 	if token.AccessToken == "" {
@@ -264,9 +274,12 @@ func (c *Client) doJSON(ctx context.Context, method, endpoint, token string, bod
 		return fmt.Errorf("request Keycloak %s: %w", op, err)
 	}
 	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("read Keycloak %s response: %w", op, err)
+	}
 	if resp.StatusCode/100 != 2 {
-		return &APIError{Op: op, StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(respBody))}
+		return &APIError{Op: op, StatusCode: resp.StatusCode, Body: truncateDiagnostic(respBody)}
 	}
 	if out == nil || len(respBody) == 0 {
 		return nil
@@ -275,6 +288,17 @@ func (c *Client) doJSON(ctx context.Context, method, endpoint, token string, bod
 		return fmt.Errorf("decode Keycloak %s: %w", op, err)
 	}
 	return nil
+}
+
+// truncateDiagnostic caps error-body text used in APIError / log messages.
+const diagnosticBodyLimit = 4096
+
+func truncateDiagnostic(body []byte) string {
+	s := strings.TrimSpace(string(body))
+	if len(s) <= diagnosticBodyLimit {
+		return s
+	}
+	return s[:diagnosticBodyLimit]
 }
 
 func (c *Client) findOrganizationByName(ctx context.Context, token, name string) (Organization, error) {

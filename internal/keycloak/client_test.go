@@ -3,6 +3,7 @@ package keycloak
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -230,15 +231,25 @@ func TestOrganizationCRUD(t *testing.T) {
 		t.Fatalf("GetOrganization name = %q", got.Name)
 	}
 
-	updated, err := client.UpdateOrganization(ctx, Organization{
-		ID: created.ID, Name: "acme-renamed", Alias: "acme-renamed",
-		Domains: []OrganizationDomain{{Name: "renamed.example.com"}},
-	})
+	enabled := false
+	created.Enabled = &enabled
+	created.Description = "keep-me"
+	created.RedirectURL = "https://acme.example.com/login"
+	created.Name = "acme-renamed"
+	created.Domains = []OrganizationDomain{{Name: "renamed.example.com"}}
+	// Alias stays at the create-time value (immutable in Keycloak).
+	updated, err := client.UpdateOrganization(ctx, created)
 	if err != nil {
 		t.Fatalf("UpdateOrganization() error = %v", err)
 	}
-	if updated.Name != "acme-renamed" || len(updated.DomainNames()) != 1 || updated.DomainNames()[0] != "renamed.example.com" {
-		t.Fatalf("updated = %+v", updated)
+	if updated.Name != "acme-renamed" || updated.Alias != "acme" {
+		t.Fatalf("updated name/alias = %+v", updated)
+	}
+	if updated.Enabled == nil || *updated.Enabled || updated.Description != "keep-me" || updated.RedirectURL != "https://acme.example.com/login" {
+		t.Fatalf("updated lost Keycloak fields: %+v", updated)
+	}
+	if len(updated.DomainNames()) != 1 || updated.DomainNames()[0] != "renamed.example.com" {
+		t.Fatalf("updated domains = %v", updated.DomainNames())
 	}
 
 	if err := client.DeleteOrganization(ctx, created.ID); err != nil {
@@ -265,6 +276,51 @@ func TestOrganizationDomainNames(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("DomainNames()[%d] = %q, want %q", i, got[i], want[i])
 		}
+	}
+}
+
+func TestListOrganizationsLargeBody(t *testing.T) {
+	t.Parallel()
+
+	// Responses larger than the old 4 KiB LimitReader must still decode.
+	orgs := make([]Organization, 0, 80)
+	for i := 0; i < 80; i++ {
+		orgs = append(orgs, Organization{
+			ID:    fmt.Sprintf("org-%03d-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", i),
+			Name:  fmt.Sprintf("tenant-%03d-with-a-longer-name-for-payload", i),
+			Alias: fmt.Sprintf("tenant-%03d-with-a-longer-name-for-payload", i),
+			Domains: []OrganizationDomain{
+				{Name: fmt.Sprintf("tenant-%03d.example.com", i)},
+			},
+		})
+	}
+	payload, err := json.Marshal(orgs)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if len(payload) <= 4096 {
+		t.Fatalf("test payload too small (%d bytes); need >4096", len(payload))
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/token") {
+			_ = json.NewEncoder(w).Encode(map[string]string{"access_token": "t"})
+			return
+		}
+		_, _ = w.Write(payload)
+	}))
+	t.Cleanup(server.Close)
+
+	client := New(Config{
+		BaseURL: server.URL, AdminRealm: "master", Realm: "ai-grid",
+		Username: "admin", Password: "admin", HTTPClient: server.Client(),
+	})
+	got, err := client.ListOrganizations(context.Background())
+	if err != nil {
+		t.Fatalf("ListOrganizations() error = %v", err)
+	}
+	if len(got) != 80 {
+		t.Fatalf("len = %d, want 80", len(got))
 	}
 }
 

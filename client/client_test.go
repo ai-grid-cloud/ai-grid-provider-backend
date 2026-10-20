@@ -297,11 +297,12 @@ func (f *mutableOrganizationStore) CreateOrganization(_ context.Context, org key
 }
 
 func (f *mutableOrganizationStore) UpdateOrganization(_ context.Context, org keycloak.Organization) (keycloak.Organization, error) {
-	if _, ok := f.byID[org.ID]; !ok {
+	existing, ok := f.byID[org.ID]
+	if !ok {
 		return keycloak.Organization{}, &keycloak.APIError{Op: "update organization", StatusCode: http.StatusNotFound}
 	}
 	if org.Alias == "" {
-		org.Alias = org.Name
+		org.Alias = existing.Alias
 	}
 	f.byID[org.ID] = org
 	return org, nil

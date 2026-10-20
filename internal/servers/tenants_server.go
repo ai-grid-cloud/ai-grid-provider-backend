@@ -173,8 +173,8 @@ func (s *TenantsServer) Update(ctx context.Context, req *aigridv1.TenantsUpdateR
 		if err := validateTenantName(name); err != nil {
 			return nil, err
 		}
+		// Name is mutable; Alias is immutable in Keycloak once set — keep current.
 		next.Name = name
-		next.Alias = name
 	}
 	if updateDomains {
 		if object.GetSpec() == nil {

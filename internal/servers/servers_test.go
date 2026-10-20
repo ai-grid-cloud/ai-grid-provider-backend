@@ -654,9 +654,15 @@ func TestUpdateTenant(t *testing.T) {
 
 	t.Run("updates name and domains", func(t *testing.T) {
 		t.Parallel()
-		server := mustTenantsServer(t, newFakeOrganizationStore(
-			keycloak.Organization{ID: "org-1", Name: "acme", Domains: []keycloak.OrganizationDomain{{Name: "acme.example.com"}}},
-		))
+		enabled := false
+		store := newFakeOrganizationStore(
+			keycloak.Organization{
+				ID: "org-1", Name: "acme", Alias: "acme",
+				Enabled: &enabled, Description: "keep-me", RedirectURL: "https://acme.example.com",
+				Domains: []keycloak.OrganizationDomain{{Name: "acme.example.com"}},
+			},
+		)
+		server := mustTenantsServer(t, store)
 		got, err := server.Update(context.Background(), &aigridv1.TenantsUpdateRequest{
 			Object: &aigridv1.Tenant{
 				Id:       "org-1",
@@ -671,13 +677,29 @@ func TestUpdateTenant(t *testing.T) {
 			t.Fatalf("name = %q", got.GetObject().GetMetadata().GetName())
 		}
 		assertStringSlicesEqual(t, got.GetObject().GetSpec().GetDomains(), []string{"renamed.example.com"})
+		stored, err := store.GetOrganization(context.Background(), "org-1")
+		if err != nil {
+			t.Fatalf("GetOrganization: %v", err)
+		}
+		if stored.Alias != "acme" {
+			t.Fatalf("alias changed on rename: %q", stored.Alias)
+		}
+		if stored.Enabled == nil || *stored.Enabled || stored.Description != "keep-me" || stored.RedirectURL != "https://acme.example.com" {
+			t.Fatalf("Keycloak fields not preserved: %+v", stored)
+		}
 	})
 
 	t.Run("field mask domains only", func(t *testing.T) {
 		t.Parallel()
-		server := mustTenantsServer(t, newFakeOrganizationStore(
-			keycloak.Organization{ID: "org-1", Name: "acme", Domains: []keycloak.OrganizationDomain{{Name: "acme.example.com"}}},
-		))
+		enabled := false
+		store := newFakeOrganizationStore(
+			keycloak.Organization{
+				ID: "org-1", Name: "acme", Alias: "acme",
+				Enabled: &enabled, Description: "keep-me",
+				Domains: []keycloak.OrganizationDomain{{Name: "acme.example.com"}},
+			},
+		)
+		server := mustTenantsServer(t, store)
 		got, err := server.Update(context.Background(), &aigridv1.TenantsUpdateRequest{
 			Object: &aigridv1.Tenant{
 				Id:       "org-1",
@@ -693,6 +715,13 @@ func TestUpdateTenant(t *testing.T) {
 			t.Fatalf("name changed despite domains-only mask: %q", got.GetObject().GetMetadata().GetName())
 		}
 		assertStringSlicesEqual(t, got.GetObject().GetSpec().GetDomains(), []string{"only-domains.example.com"})
+		stored, err := store.GetOrganization(context.Background(), "org-1")
+		if err != nil {
+			t.Fatalf("GetOrganization: %v", err)
+		}
+		if stored.Alias != "acme" || stored.Description != "keep-me" || stored.Enabled == nil || *stored.Enabled {
+			t.Fatalf("domains-only update cleared Keycloak fields: %+v", stored)
+		}
 	})
 
 	t.Run("not found", func(t *testing.T) {
@@ -790,11 +819,13 @@ func (f *fakeOrganizationStore) CreateOrganization(_ context.Context, org keyclo
 func (f *fakeOrganizationStore) UpdateOrganization(_ context.Context, org keycloak.Organization) (keycloak.Organization, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if _, ok := f.byID[org.ID]; !ok {
+	existing, ok := f.byID[org.ID]
+	if !ok {
 		return keycloak.Organization{}, &keycloak.APIError{Op: "update organization", StatusCode: http.StatusNotFound}
 	}
+	// Keycloak alias is immutable once set; preserve when omitted.
 	if org.Alias == "" {
-		org.Alias = org.Name
+		org.Alias = existing.Alias
 	}
 	f.byID[org.ID] = org
 	return org, nil
