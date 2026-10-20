@@ -38,7 +38,7 @@ func (b *Builder) Build(ctx context.Context) (*Client, error) {
 		return nil, errors.New("server address is mandatory")
 	}
 	if !b.plaintext {
-		return nil, errors.New("TLS is not configured; call SetPlaintext(true) for a local server")
+		return nil, errors.New("tls is not configured; call SetPlaintext(true) for a local server")
 	}
 
 	// NewClient dials lazily; ctx is kept on Build for API compatibility.
