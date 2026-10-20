@@ -63,7 +63,7 @@ func TestListOrganizations(t *testing.T) {
 				}
 				http.NotFound(w, r)
 			},
-			wantErr: "Keycloak token request returned",
+			wantErr: "keycloak token request returned",
 		},
 		{
 			name: "organizations failure",

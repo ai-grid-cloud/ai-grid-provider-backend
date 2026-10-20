@@ -244,14 +244,14 @@ func (c *Client) token(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("read Keycloak token response: %w", err)
 	}
 	if tokenResponseBody.StatusCode/100 != 2 {
-		return "", fmt.Errorf("Keycloak token request returned %s: %s", tokenResponseBody.Status, truncateDiagnostic(body))
+		return "", fmt.Errorf("keycloak token request returned %s: %s", tokenResponseBody.Status, truncateDiagnostic(body))
 	}
 	var token tokenResponse
 	if err := json.Unmarshal(body, &token); err != nil {
 		return "", fmt.Errorf("decode Keycloak token: %w", err)
 	}
 	if token.AccessToken == "" {
-		return "", fmt.Errorf("Keycloak token response missing access_token")
+		return "", fmt.Errorf("keycloak token response missing access_token")
 	}
 	return token.AccessToken, nil
 }
