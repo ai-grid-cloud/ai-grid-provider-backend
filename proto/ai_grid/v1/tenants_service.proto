@@ -70,7 +70,8 @@ message TenantsDeleteRequest {
 
 message TenantsDeleteResponse {}
 
-// Tenants are represented by Keycloak Organizations in the shared ai-grid realm.
+// Tenants are Keycloak Organizations in the shared platform realm (KEYCLOAK_REALM).
+// They are not Keycloak realms.
 service Tenants {
   rpc List(TenantsListRequest) returns (TenantsListResponse) {
     option (google.api.http) = {get: "/api/v1/tenants"};

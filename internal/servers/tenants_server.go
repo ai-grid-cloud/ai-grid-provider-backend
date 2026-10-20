@@ -18,6 +18,12 @@ import (
 // RFC 1123 DNS label: 1–63 chars, lowercase alphanumeric, hyphens allowed inside.
 var tenantNameRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
+// Approximate IPv4 / IPv6 rejection for tenant domains (OSAC parity); not a full IP parser.
+var (
+	ipv4RE      = regexp.MustCompile(`^[0-9.]+$`)
+	ipv6LooseRE = regexp.MustCompile(`^[0-9a-fA-F:]+$`)
+)
+
 // organizationClient is the Keycloak Organizations surface used by Tenants.
 // Tests inject fakes; production wires *keycloak.Client.
 type organizationClient interface {
@@ -123,11 +129,15 @@ func (s *TenantsServer) Create(ctx context.Context, req *aigridv1.TenantsCreateR
 	if err := validateTenantName(name); err != nil {
 		return nil, err
 	}
+	domains := domainsFromTenantSpec(object.GetSpec())
+	if err := validateTenantDomains(domains); err != nil {
+		return nil, err
+	}
 
 	org := keycloak.Organization{
 		Name:    name,
 		Alias:   name,
-		Domains: domainsFromTenantSpec(object.GetSpec()),
+		Domains: domains,
 	}
 	created, err := s.tenants.CreateOrganization(ctx, org)
 	if err != nil {
@@ -171,6 +181,9 @@ func (s *TenantsServer) Update(ctx context.Context, req *aigridv1.TenantsUpdateR
 			next.Domains = nil
 		} else {
 			next.Domains = domainsFromTenantSpec(object.GetSpec())
+		}
+		if err := validateTenantDomains(next.Domains); err != nil {
+			return nil, err
 		}
 	}
 
@@ -257,6 +270,39 @@ func validateTenantName(name string) error {
 	}
 	if !tenantNameRE.MatchString(name) {
 		return status.Errorf(codes.InvalidArgument, "metadata.name %q is not a valid RFC 1123 DNS label", name)
+	}
+	return nil
+}
+
+// validateTenantDomains checks domains toward OSAC rules: DNS hostname (not IP),
+// at least two labels, lowercase DNS labels, max lengths, no duplicates.
+// Empty domain lists are allowed.
+func validateTenantDomains(domains []keycloak.OrganizationDomain) error {
+	seen := make(map[string]struct{}, len(domains))
+	for _, d := range domains {
+		name := strings.TrimSpace(d.Name)
+		if name == "" {
+			return status.Error(codes.InvalidArgument, "spec.domains entries must be non-empty")
+		}
+		if len(name) > 253 {
+			return status.Errorf(codes.InvalidArgument, "spec.domains entry %q exceeds 253 characters", name)
+		}
+		if ipv4RE.MatchString(name) || ipv6LooseRE.MatchString(name) {
+			return status.Errorf(codes.InvalidArgument, "spec.domains entry %q must be a DNS hostname, not an IP address", name)
+		}
+		if !strings.Contains(name, ".") {
+			return status.Errorf(codes.InvalidArgument, "spec.domains entry %q must have at least two labels (e.g. example.com)", name)
+		}
+		labels := strings.Split(name, ".")
+		for _, label := range labels {
+			if !tenantNameRE.MatchString(label) {
+				return status.Errorf(codes.InvalidArgument, "spec.domains entry %q has invalid DNS label %q (lowercase a-z/0-9/hyphen only)", name, label)
+			}
+		}
+		if _, ok := seen[name]; ok {
+			return status.Errorf(codes.InvalidArgument, "spec.domains contains duplicate %q", name)
+		}
+		seen[name] = struct{}{}
 	}
 	return nil
 }

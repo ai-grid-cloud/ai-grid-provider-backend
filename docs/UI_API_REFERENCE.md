@@ -45,7 +45,9 @@ unwraps them via `response_body: "object"`.
 Also served (not resource APIs): `GET /openapi.json`, `GET /docs/`.
 
 API request authentication and authorization are out of scope for this MVP.
-Endpoints are open; Keycloak is used only as the Tenants Organizations backend.
+Endpoints are open; Keycloak is used only as the Tenants Organizations backend
+(Admin API). `KEYCLOAK_REALM` (default `ai-grid`) is the **shared platform
+realm** — not a per-tenant identifier.
 
 ---
 
@@ -298,17 +300,29 @@ prefer waiting or using a new name.
 
 ## 3. Tenants (Keycloak Organizations)
 
-Tenants map to **Keycloak Organizations** in the shared `ai-grid` realm.
+**Model:** one shared Keycloak realm (`KEYCLOAK_REALM`, default `ai-grid`) holds
+all tenants. Each **Tenant is a Keycloak Organization** in that realm — **not**
+a Keycloak realm. Admin API paths look like
+`/admin/realms/{platform-realm}/organizations/...`; the `{platform-realm}`
+segment is the shared realm name, not the tenant id.
+
+Users and identity providers (when added later) are realm-scoped resources that
+link to Organizations; they are out of scope for this API today.
 
 | Field | Meaning for UI |
 | --- | --- |
 | `id` | Keycloak organization **UUID** (server-assigned on create) |
 | `metadata.name` | Organization name (RFC 1123 DNS label); required on create |
-| `spec.domains` | Email domains for the org |
+| `spec.domains` | Email domains for the org (DNS hostnames, ≥2 labels, lowercase) |
 | `status` | Empty object today |
 
 UI should treat **`id`** as the stable identifier for Get/Update/Delete, and
 **`metadata.name`** as the display / create name.
+
+**vs OSAC:** OSAC stores Tenants in a DB and a reconciler provisions the
+Keycloak Organization (plus break-glass / IdP). AI Grid maps Tenants **directly**
+to Keycloak Organizations Admin CRUD. Same Keycloak model (org-in-shared-realm);
+do not “fix” by creating a realm per tenant.
 
 ---
 
@@ -368,6 +382,8 @@ Notes:
 
 - Do **not** send a client-chosen `id`; Keycloak assigns it.
 - `metadata.name` is required (RFC 1123 DNS label).
+- `spec.domains` entries must be lowercase DNS hostnames with at least two
+  labels (e.g. `acme.example.com`); IPs and single-label names are rejected.
 
 **Response `200`**
 

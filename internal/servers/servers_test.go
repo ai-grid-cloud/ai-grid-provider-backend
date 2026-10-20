@@ -593,6 +593,54 @@ func TestCreateTenant(t *testing.T) {
 		assertGRPCCode(t, err, codes.InvalidArgument)
 	})
 
+	t.Run("invalid domain single label", func(t *testing.T) {
+		t.Parallel()
+		server := mustTenantsServer(t, newFakeOrganizationStore())
+		_, err := server.Create(context.Background(), &aigridv1.TenantsCreateRequest{
+			Object: &aigridv1.Tenant{
+				Metadata: &aigridv1.Metadata{Name: "acme"},
+				Spec:     &aigridv1.TenantSpec{Domains: []string{"localhost"}},
+			},
+		})
+		assertGRPCCode(t, err, codes.InvalidArgument)
+	})
+
+	t.Run("invalid domain ip", func(t *testing.T) {
+		t.Parallel()
+		server := mustTenantsServer(t, newFakeOrganizationStore())
+		_, err := server.Create(context.Background(), &aigridv1.TenantsCreateRequest{
+			Object: &aigridv1.Tenant{
+				Metadata: &aigridv1.Metadata{Name: "acme"},
+				Spec:     &aigridv1.TenantSpec{Domains: []string{"1.2.3.4"}},
+			},
+		})
+		assertGRPCCode(t, err, codes.InvalidArgument)
+	})
+
+	t.Run("invalid domain uppercase", func(t *testing.T) {
+		t.Parallel()
+		server := mustTenantsServer(t, newFakeOrganizationStore())
+		_, err := server.Create(context.Background(), &aigridv1.TenantsCreateRequest{
+			Object: &aigridv1.Tenant{
+				Metadata: &aigridv1.Metadata{Name: "acme"},
+				Spec:     &aigridv1.TenantSpec{Domains: []string{"Acme.Example.COM"}},
+			},
+		})
+		assertGRPCCode(t, err, codes.InvalidArgument)
+	})
+
+	t.Run("duplicate domains", func(t *testing.T) {
+		t.Parallel()
+		server := mustTenantsServer(t, newFakeOrganizationStore())
+		_, err := server.Create(context.Background(), &aigridv1.TenantsCreateRequest{
+			Object: &aigridv1.Tenant{
+				Metadata: &aigridv1.Metadata{Name: "acme"},
+				Spec:     &aigridv1.TenantSpec{Domains: []string{"acme.example.com", "acme.example.com"}},
+			},
+		})
+		assertGRPCCode(t, err, codes.InvalidArgument)
+	})
+
 	t.Run("nil object", func(t *testing.T) {
 		t.Parallel()
 		server := mustTenantsServer(t, newFakeOrganizationStore())

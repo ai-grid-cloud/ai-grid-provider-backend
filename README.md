@@ -37,13 +37,14 @@ The service runs in-cluster using its Kubernetes ServiceAccount. Its RBAC role
 allows `get`, `list`, `watch`, `create`, `update`, `patch`, and `delete` on
 `ManagedCluster` resources.
 
-Tenants CRUD maps to Keycloak Organizations in the `ai-grid` realm through the
-Keycloak Admin REST API. `id` is the Keycloak organization UUID;
-`metadata.name` is the organization name (and alias). The Kind setup creates
-two sample Organizations, `tenant-a` and `tenant-b`, and configures the backend
-with the development Keycloak admin credentials. Use a dedicated service
-account with organization manage/query roles instead of these credentials
-outside local testing.
+Tenants CRUD maps to **Keycloak Organizations** in one shared platform realm
+(`KEYCLOAK_REALM`, default `ai-grid`) through the Keycloak Admin REST API.
+A Tenant is an Organization — **not** a Keycloak realm. `id` is the
+organization UUID; `metadata.name` is the organization name (and alias). The
+Kind setup creates two sample Organizations, `tenant-a` and `tenant-b`, and
+configures the backend with the development Keycloak admin credentials. Use a
+dedicated service account with organization manage/query roles instead of these
+credentials outside local testing.
 
 ## Local architecture
 
