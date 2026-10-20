@@ -29,7 +29,8 @@
 #                         0: never install ACM (same as SKIP_ACM=1)
 #   SKIP_ACM              1 to skip ACM install (alias for INSTALL_ACM=0)
 #   APPLY_SAMPLES         1 (default) apply sample ManagedClusters; 0 to skip
-#   NAMESPACE             default ai-grid
+#   NAMESPACE             backend/Keycloak namespace (default ai-grid)
+#   ACM_NAMESPACE         RHACM operator namespace (default open-cluster-management)
 #   GRANT_ANYUID          1 to grant anyuid SCC to default SA (Keycloak/Postgres)
 #   CHANNEL               ACM Subscription channel (passed through to acm-hub-up)
 #
@@ -39,6 +40,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MANIFESTS="${ROOT}/deploy/openshift"
 NAMESPACE="${NAMESPACE:-ai-grid}"
+# ACM must not inherit the backend NAMESPACE; chart templates also use .Values.namespace.
+ACM_NAMESPACE="${ACM_NAMESPACE:-open-cluster-management}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
 IMAGE="${IMAGE:-quay.io/rh-ee-rjjohnso/ai-grid-provider-backend:${IMAGE_TAG}}"
 BUILD_IMAGE="${BUILD_IMAGE:-0}"
@@ -112,9 +115,11 @@ if should_install_acm; then
     exit 1
   fi
   echo "==> ManagedCluster CRD missing or INSTALL_ACM=1; installing RHACM hub (15–20+ minutes)"
+  echo "    ACM namespace: ${ACM_NAMESPACE} (override with ACM_NAMESPACE=...; backend stays in ${NAMESPACE})"
   echo "    Override channel with CHANNEL=release-2.13 (OCP 4.18) or CHANNEL=release-2.16 (OCP ≥ 4.19)"
   # Keep acm-hub playground samples; openshift APPLY_SAMPLES adds ai-grid-sample-* as well.
-  bash "${ROOT}/deploy/acm-hub/scripts/acm-hub-up.sh"
+  # Force ACM_NAMESPACE so a caller's NAMESPACE=ai-grid does not poison helm --namespace.
+  env NAMESPACE="${ACM_NAMESPACE}" bash "${ROOT}/deploy/acm-hub/scripts/acm-hub-up.sh"
 elif managed_cluster_crd_present; then
   echo "==> ManagedCluster CRD present; skipping ACM install"
 else

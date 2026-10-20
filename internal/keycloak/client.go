@@ -60,8 +60,8 @@ type OrganizationDomain struct {
 }
 
 // Organization is a Keycloak Organization in the configured realm.
-// Extra fields (Enabled, Description, RedirectURL) are preserved through
-// GET→modify→PUT so Keycloak replacement semantics do not clear them.
+// Extra fields (Enabled, Description, RedirectURL, Attributes) are preserved
+// through GET→modify→PUT so Keycloak replacement semantics do not clear them.
 type Organization struct {
 	ID          string               `json:"id,omitempty"`
 	Name        string               `json:"name"`
@@ -69,6 +69,7 @@ type Organization struct {
 	Enabled     *bool                `json:"enabled,omitempty"`
 	Description string               `json:"description,omitempty"`
 	RedirectURL string               `json:"redirectUrl,omitempty"`
+	Attributes  map[string][]string  `json:"attributes,omitempty"`
 	Domains     []OrganizationDomain `json:"domains,omitempty"`
 }
 

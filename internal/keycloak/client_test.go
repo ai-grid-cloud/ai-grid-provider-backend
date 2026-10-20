@@ -279,6 +279,76 @@ func TestOrganizationDomainNames(t *testing.T) {
 	}
 }
 
+func TestUpdateOrganizationPreservesAttributes(t *testing.T) {
+	t.Parallel()
+
+	stored := Organization{
+		ID:    "org-1",
+		Name:  "acme",
+		Alias: "acme",
+		Attributes: map[string][]string{
+			"billing-id": {"keep-me"},
+		},
+		Domains: []OrganizationDomain{{Name: "acme.example.com"}},
+	}
+	var putBody []byte
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/token") {
+			_ = json.NewEncoder(w).Encode(map[string]string{"access_token": "test-token"})
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			_ = json.NewEncoder(w).Encode(stored)
+		case http.MethodPut:
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			putBody = body
+			var org Organization
+			if err := json.Unmarshal(body, &org); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			stored = org
+			stored.ID = "org-1"
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.Error(w, "method", http.StatusMethodNotAllowed)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client := New(Config{
+		BaseURL: server.URL, AdminRealm: "master", Realm: "ai-grid",
+		Username: "admin", Password: "admin", HTTPClient: server.Client(),
+	})
+	ctx := context.Background()
+
+	current, err := client.GetOrganization(ctx, "org-1")
+	if err != nil {
+		t.Fatalf("GetOrganization() error = %v", err)
+	}
+	current.Name = "acme-renamed"
+	current.Domains = []OrganizationDomain{{Name: "renamed.example.com"}}
+	if _, err := client.UpdateOrganization(ctx, current); err != nil {
+		t.Fatalf("UpdateOrganization() error = %v", err)
+	}
+	if len(putBody) == 0 {
+		t.Fatal("expected PUT body")
+	}
+	var sent Organization
+	if err := json.Unmarshal(putBody, &sent); err != nil {
+		t.Fatalf("decode PUT body: %v", err)
+	}
+	if got := sent.Attributes["billing-id"]; len(got) != 1 || got[0] != "keep-me" {
+		t.Fatalf("PUT omitted attributes: %+v (raw=%s)", sent.Attributes, putBody)
+	}
+}
+
 func TestListOrganizationsLargeBody(t *testing.T) {
 	t.Parallel()
 

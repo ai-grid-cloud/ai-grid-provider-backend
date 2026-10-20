@@ -125,11 +125,14 @@ func (s *TenantsServer) Create(ctx context.Context, req *aigridv1.TenantsCreateR
 	if object == nil {
 		return nil, status.Error(codes.InvalidArgument, "object is required")
 	}
-	name := tenantName(object)
+	name := tenantDisplayName(object)
 	if err := validateTenantName(name); err != nil {
 		return nil, err
 	}
-	domains := domainsFromTenantSpec(object.GetSpec())
+	domains, err := domainsFromTenantSpec(object.GetSpec())
+	if err != nil {
+		return nil, err
+	}
 	if err := validateTenantDomains(domains); err != nil {
 		return nil, err
 	}
@@ -163,11 +166,17 @@ func (s *TenantsServer) Update(ctx context.Context, req *aigridv1.TenantsUpdateR
 		return nil, mapTenantKeycloakError("get", id, err)
 	}
 
-	updateName, updateDomains := tenantUpdatePaths(req.GetUpdateMask())
+	updateName, updateDomains, nameRequired, err := tenantUpdatePaths(req.GetUpdateMask())
+	if err != nil {
+		return nil, err
+	}
 	next := current
 	if updateName {
-		name := tenantName(object)
+		name := tenantDisplayName(object)
 		if name == "" {
+			if nameRequired {
+				return nil, status.Error(codes.InvalidArgument, "metadata.name is required")
+			}
 			name = current.Name
 		}
 		if err := validateTenantName(name); err != nil {
@@ -180,7 +189,11 @@ func (s *TenantsServer) Update(ctx context.Context, req *aigridv1.TenantsUpdateR
 		if object.GetSpec() == nil {
 			next.Domains = nil
 		} else {
-			next.Domains = domainsFromTenantSpec(object.GetSpec())
+			domains, err := domainsFromTenantSpec(object.GetSpec())
+			if err != nil {
+				return nil, err
+			}
+			next.Domains = domains
 		}
 		if err := validateTenantDomains(next.Domains); err != nil {
 			return nil, err
@@ -219,42 +232,54 @@ func tenantFromOrganization(organization keycloak.Organization) *aigridv1.Tenant
 	}
 }
 
-func tenantName(object *aigridv1.Tenant) string {
-	if object.GetMetadata() != nil && object.GetMetadata().GetName() != "" {
-		return object.GetMetadata().GetName()
+// tenantDisplayName returns metadata.name only. Callers must not synthesize a
+// name from the organization id — that defeats empty-name preservation on Update.
+func tenantDisplayName(object *aigridv1.Tenant) string {
+	if object.GetMetadata() == nil {
+		return ""
 	}
-	return object.GetId()
+	return object.GetMetadata().GetName()
 }
 
-func domainsFromTenantSpec(spec *aigridv1.TenantSpec) []keycloak.OrganizationDomain {
+func domainsFromTenantSpec(spec *aigridv1.TenantSpec) ([]keycloak.OrganizationDomain, error) {
 	if spec == nil {
-		return nil
+		return nil, nil
 	}
 	domains := make([]keycloak.OrganizationDomain, 0, len(spec.GetDomains()))
 	for _, domain := range spec.GetDomains() {
-		domain = strings.TrimSpace(domain)
-		if domain == "" {
-			continue
+		trimmed := strings.TrimSpace(domain)
+		if trimmed == "" {
+			return nil, status.Error(codes.InvalidArgument, "spec.domains entries must be non-empty")
 		}
-		domains = append(domains, keycloak.OrganizationDomain{Name: domain})
+		domains = append(domains, keycloak.OrganizationDomain{Name: trimmed})
 	}
-	return domains
+	return domains, nil
 }
 
-func tenantUpdatePaths(mask *fieldmaskpb.FieldMask) (name, domains bool) {
+// tenantUpdatePaths reports which mutable fields an Update changes.
+// Supported paths: metadata, metadata.name, spec, spec.domains (optional object. prefix).
+// id is accepted as a no-op (REST PATCH body masks often include it).
+// Unsupported paths are rejected. nameRequired is true when an explicit mask
+// selects the name (empty mask updates name but may preserve when absent).
+func tenantUpdatePaths(mask *fieldmaskpb.FieldMask) (name, domains, nameRequired bool, err error) {
 	if mask == nil || len(mask.GetPaths()) == 0 {
-		return true, true
+		return true, true, false, nil
 	}
 	for _, path := range mask.GetPaths() {
 		p := strings.TrimPrefix(path, "object.")
-		switch {
-		case p == "metadata.name" || p == "metadata" || strings.HasPrefix(p, "metadata."):
+		switch p {
+		case "id":
+			// Identity is taken from the path / object.id; ignore in the mask.
+		case "metadata", "metadata.name":
 			name = true
-		case p == "spec.domains" || p == "spec" || strings.HasPrefix(p, "spec."):
+			nameRequired = true
+		case "spec", "spec.domains":
 			domains = true
+		default:
+			return false, false, false, status.Errorf(codes.InvalidArgument, "unsupported update_mask path %q", path)
 		}
 	}
-	return name, domains
+	return name, domains, nameRequired, nil
 }
 
 func validateTenantID(id string) error {

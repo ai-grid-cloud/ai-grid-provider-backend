@@ -416,8 +416,13 @@ Notes:
 
 **Behavior today:**
 
-- Empty update mask updates **name + domains**.
+- Empty update mask (typical gRPC with no `update_mask`) updates **name + domains**.
+  REST PATCH with no explicit mask typically derives a body mask from fields present
+  in the JSON — that is **not** identical to an empty-mask Go/gRPC update.
+- Supported mask paths: `metadata`, `metadata.name`, `spec`, `spec.domains`
+  (optional `object.` prefix). Unsupported paths return `InvalidArgument`.
 - Domains in the body **replace** the domain list when domains are updated.
+  Blank/whitespace-only domain entries are rejected (`InvalidArgument`), not dropped.
 - Optional query `lock` — **not enforced yet**.
 
 **Response `200`** — updated `Tenant`.

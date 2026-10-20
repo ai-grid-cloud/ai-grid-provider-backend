@@ -641,6 +641,18 @@ func TestCreateTenant(t *testing.T) {
 		assertGRPCCode(t, err, codes.InvalidArgument)
 	})
 
+	t.Run("blank domain entry is rejected", func(t *testing.T) {
+		t.Parallel()
+		server := mustTenantsServer(t, newFakeOrganizationStore())
+		_, err := server.Create(context.Background(), &aigridv1.TenantsCreateRequest{
+			Object: &aigridv1.Tenant{
+				Metadata: &aigridv1.Metadata{Name: "acme"},
+				Spec:     &aigridv1.TenantSpec{Domains: []string{" "}},
+			},
+		})
+		assertGRPCCode(t, err, codes.InvalidArgument)
+	})
+
 	t.Run("nil object", func(t *testing.T) {
 		t.Parallel()
 		server := mustTenantsServer(t, newFakeOrganizationStore())
@@ -721,6 +733,127 @@ func TestUpdateTenant(t *testing.T) {
 		}
 		if stored.Alias != "acme" || stored.Description != "keep-me" || stored.Enabled == nil || *stored.Enabled {
 			t.Fatalf("domains-only update cleared Keycloak fields: %+v", stored)
+		}
+	})
+
+	t.Run("rejects unsupported field mask paths", func(t *testing.T) {
+		t.Parallel()
+		store := newFakeOrganizationStore(
+			keycloak.Organization{
+				ID: "org-1", Name: "acme", Alias: "acme",
+				Domains: []keycloak.OrganizationDomain{{Name: "acme.example.com"}},
+			},
+		)
+		server := mustTenantsServer(t, store)
+		_, err := server.Update(context.Background(), &aigridv1.TenantsUpdateRequest{
+			Object: &aigridv1.Tenant{
+				Id:       "org-1",
+				Metadata: &aigridv1.Metadata{Name: "unexpected"},
+			},
+			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"metadata.labels"}},
+		})
+		assertGRPCCode(t, err, codes.InvalidArgument)
+		stored, err := store.GetOrganization(context.Background(), "org-1")
+		if err != nil {
+			t.Fatalf("GetOrganization: %v", err)
+		}
+		if stored.Name != "acme" {
+			t.Fatalf("unsupported mask mutated name to %q", stored.Name)
+		}
+	})
+
+	t.Run("empty mask without name preserves display name", func(t *testing.T) {
+		t.Parallel()
+		store := newFakeOrganizationStore(
+			keycloak.Organization{
+				ID: "org-1", Name: "acme", Alias: "acme",
+				Domains: []keycloak.OrganizationDomain{{Name: "acme.example.com"}},
+			},
+		)
+		server := mustTenantsServer(t, store)
+		got, err := server.Update(context.Background(), &aigridv1.TenantsUpdateRequest{
+			Object: &aigridv1.Tenant{
+				Id:   "org-1",
+				Spec: &aigridv1.TenantSpec{Domains: []string{"new.example.com"}},
+			},
+		})
+		if err != nil {
+			t.Fatalf("Update() error = %v", err)
+		}
+		if got.GetObject().GetMetadata().GetName() != "acme" {
+			t.Fatalf("name became %q; want preserved acme (not org id)", got.GetObject().GetMetadata().GetName())
+		}
+		assertStringSlicesEqual(t, got.GetObject().GetSpec().GetDomains(), []string{"new.example.com"})
+	})
+
+	t.Run("explicit empty name is rejected", func(t *testing.T) {
+		t.Parallel()
+		store := newFakeOrganizationStore(
+			keycloak.Organization{ID: "org-1", Name: "acme", Alias: "acme"},
+		)
+		server := mustTenantsServer(t, store)
+		_, err := server.Update(context.Background(), &aigridv1.TenantsUpdateRequest{
+			Object: &aigridv1.Tenant{
+				Id:       "org-1",
+				Metadata: &aigridv1.Metadata{Name: ""},
+			},
+			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"metadata.name"}},
+		})
+		assertGRPCCode(t, err, codes.InvalidArgument)
+	})
+
+	t.Run("blank domain entry is rejected", func(t *testing.T) {
+		t.Parallel()
+		store := newFakeOrganizationStore(
+			keycloak.Organization{
+				ID: "org-1", Name: "acme", Alias: "acme",
+				Domains: []keycloak.OrganizationDomain{{Name: "acme.example.com"}},
+			},
+		)
+		server := mustTenantsServer(t, store)
+		_, err := server.Update(context.Background(), &aigridv1.TenantsUpdateRequest{
+			Object: &aigridv1.Tenant{
+				Id:   "org-1",
+				Spec: &aigridv1.TenantSpec{Domains: []string{" "}},
+			},
+			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"spec.domains"}},
+		})
+		assertGRPCCode(t, err, codes.InvalidArgument)
+		stored, err := store.GetOrganization(context.Background(), "org-1")
+		if err != nil {
+			t.Fatalf("GetOrganization: %v", err)
+		}
+		if len(stored.Domains) != 1 || stored.Domains[0].Name != "acme.example.com" {
+			t.Fatalf("blank domain mutated store: %+v", stored.Domains)
+		}
+	})
+
+	t.Run("preserves attributes on update", func(t *testing.T) {
+		t.Parallel()
+		store := newFakeOrganizationStore(
+			keycloak.Organization{
+				ID: "org-1", Name: "acme", Alias: "acme",
+				Attributes: map[string][]string{"billing-id": {"keep-me"}},
+				Domains:    []keycloak.OrganizationDomain{{Name: "acme.example.com"}},
+			},
+		)
+		server := mustTenantsServer(t, store)
+		_, err := server.Update(context.Background(), &aigridv1.TenantsUpdateRequest{
+			Object: &aigridv1.Tenant{
+				Id:       "org-1",
+				Metadata: &aigridv1.Metadata{Name: "acme-renamed"},
+				Spec:     &aigridv1.TenantSpec{Domains: []string{"renamed.example.com"}},
+			},
+		})
+		if err != nil {
+			t.Fatalf("Update() error = %v", err)
+		}
+		stored, err := store.GetOrganization(context.Background(), "org-1")
+		if err != nil {
+			t.Fatalf("GetOrganization: %v", err)
+		}
+		if got := stored.Attributes["billing-id"]; len(got) != 1 || got[0] != "keep-me" {
+			t.Fatalf("attributes dropped: %+v", stored.Attributes)
 		}
 	})
 

@@ -152,7 +152,11 @@ run: ## Run the API locally (gRPC :8080, REST/Swagger :8081)
 # SKIP_CLUSTERS=1 / SKIP_TENANTS=1 to exercise a subset.
 smoke: ## Live gRPC/REST smoke against localhost:8080/:8081
 	GRPC_ADDR=$(GRPC_ADDR) HTTP_ADDR=$(HTTP_ADDR) bash hack/smoke-apis.sh
-	GRPC_ADDR=$(GRPC_ADDR) bash hack/smoke-managedcluster-crud.sh
+	@if [[ "$(SKIP_CLUSTERS)" != "1" ]]; then \
+		GRPC_ADDR=$(GRPC_ADDR) bash hack/smoke-managedcluster-crud.sh; \
+	else \
+		echo "skipping ManagedCluster CRUD (SKIP_CLUSTERS=1)"; \
+	fi
 
 # Same smoke suite against the current oc context (port-forwards svc in NAMESPACE).
 # Deploy first: make openshift-up.
