@@ -109,37 +109,7 @@ func IsForbidden(err error) bool {
 func (c *Client) ListOrganizations(ctx context.Context) ([]Organization, error) {
 	token, err := c.token(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("create Keycloak token request: %w", err)
-	}
-	tokenRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	tokenResponseBody, err := c.httpClient.Do(tokenRequest)
-	if err != nil {
-		return nil, fmt.Errorf("request Keycloak token: %w", err)
-	}
-	defer tokenResponseBody.Body.Close()
-	if tokenResponseBody.StatusCode/100 != 2 {
-		body, _ := io.ReadAll(io.LimitReader(tokenResponseBody.Body, 4096))
-		return nil, fmt.Errorf("keycloak token request returned %s: %s", tokenResponseBody.Status, strings.TrimSpace(string(body)))
-	}
-	var token tokenResponse
-	if err := json.NewDecoder(tokenResponseBody.Body).Decode(&token); err != nil {
-		return nil, fmt.Errorf("decode Keycloak token: %w", err)
-	}
-
-	endpoint := c.baseURL + "/admin/realms/" + url.PathEscape(c.realm) + "/organizations?first=0&max=" + strconv.Itoa(100)
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return nil, fmt.Errorf("create Keycloak organizations request: %w", err)
-	}
-	request.Header.Set("Authorization", "Bearer "+token.AccessToken)
-	response, err := c.httpClient.Do(request)
-	if err != nil {
-		return nil, fmt.Errorf("request Keycloak organizations: %w", err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode/100 != 2 {
-		body, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
-		return nil, fmt.Errorf("keycloak organizations request returned %s: %s", response.Status, strings.TrimSpace(string(body)))
+		return nil, err
 	}
 	endpoint := c.orgsURL() + "?first=0&max=" + strconv.Itoa(100)
 	var organizations []Organization

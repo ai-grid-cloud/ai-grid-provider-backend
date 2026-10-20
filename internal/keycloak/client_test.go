@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -61,7 +62,7 @@ func TestListOrganizations(t *testing.T) {
 				}
 				http.NotFound(w, r)
 			},
-			wantErr: "keycloak token request returned",
+			wantErr: "Keycloak token request returned",
 		},
 		{
 			name: "organizations failure",
@@ -75,7 +76,7 @@ func TestListOrganizations(t *testing.T) {
 					http.NotFound(w, r)
 				}
 			},
-			wantErr: "keycloak organizations request returned",
+			wantErr: "Keycloak list organizations returned",
 		},
 	}
 
@@ -123,6 +124,132 @@ func TestListOrganizations(t *testing.T) {
 	}
 }
 
+func TestOrganizationCRUD(t *testing.T) {
+	t.Parallel()
+
+	var mu sync.Mutex
+	orgs := map[string]Organization{}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/token") {
+			_ = json.NewEncoder(w).Encode(map[string]string{"access_token": "test-token"})
+			return
+		}
+		if !strings.Contains(r.URL.Path, "/organizations") {
+			http.NotFound(w, r)
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+
+		switch r.Method {
+		case http.MethodGet:
+			if strings.HasSuffix(r.URL.Path, "/organizations") {
+				items := make([]Organization, 0, len(orgs))
+				for _, org := range orgs {
+					items = append(items, org)
+				}
+				_ = json.NewEncoder(w).Encode(items)
+				return
+			}
+			id := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
+			org, ok := orgs[id]
+			if !ok {
+				http.Error(w, "missing", http.StatusNotFound)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(org)
+		case http.MethodPost:
+			var org Organization
+			if err := json.NewDecoder(r.Body).Decode(&org); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			for _, existing := range orgs {
+				if existing.Name == org.Name {
+					http.Error(w, "conflict", http.StatusConflict)
+					return
+				}
+			}
+			org.ID = "org-created"
+			orgs[org.ID] = org
+			w.Header().Set("Location", r.URL.Path+"/"+org.ID)
+			w.WriteHeader(http.StatusCreated)
+		case http.MethodPut:
+			id := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
+			if _, ok := orgs[id]; !ok {
+				http.Error(w, "missing", http.StatusNotFound)
+				return
+			}
+			var org Organization
+			if err := json.NewDecoder(r.Body).Decode(&org); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			org.ID = id
+			orgs[id] = org
+			w.WriteHeader(http.StatusNoContent)
+		case http.MethodDelete:
+			id := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
+			if _, ok := orgs[id]; !ok {
+				http.Error(w, "missing", http.StatusNotFound)
+				return
+			}
+			delete(orgs, id)
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.Error(w, "method", http.StatusMethodNotAllowed)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client := New(Config{
+		BaseURL: server.URL, AdminRealm: "master", Realm: "ai-grid",
+		Username: "admin", Password: "admin", HTTPClient: server.Client(),
+	})
+	ctx := context.Background()
+
+	created, err := client.CreateOrganization(ctx, Organization{
+		Name: "acme", Domains: []OrganizationDomain{{Name: "acme.example.com"}},
+	})
+	if err != nil {
+		t.Fatalf("CreateOrganization() error = %v", err)
+	}
+	if created.ID != "org-created" || created.Name != "acme" || created.Alias != "acme" {
+		t.Fatalf("created = %+v", created)
+	}
+	if len(created.DomainNames()) != 1 || created.DomainNames()[0] != "acme.example.com" {
+		t.Fatalf("domains = %v", created.DomainNames())
+	}
+
+	got, err := client.GetOrganization(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("GetOrganization() error = %v", err)
+	}
+	if got.Name != "acme" {
+		t.Fatalf("GetOrganization name = %q", got.Name)
+	}
+
+	updated, err := client.UpdateOrganization(ctx, Organization{
+		ID: created.ID, Name: "acme-renamed", Alias: "acme-renamed",
+		Domains: []OrganizationDomain{{Name: "renamed.example.com"}},
+	})
+	if err != nil {
+		t.Fatalf("UpdateOrganization() error = %v", err)
+	}
+	if updated.Name != "acme-renamed" || len(updated.DomainNames()) != 1 || updated.DomainNames()[0] != "renamed.example.com" {
+		t.Fatalf("updated = %+v", updated)
+	}
+
+	if err := client.DeleteOrganization(ctx, created.ID); err != nil {
+		t.Fatalf("DeleteOrganization() error = %v", err)
+	}
+	_, err = client.GetOrganization(ctx, created.ID)
+	if !IsNotFound(err) {
+		t.Fatalf("Get after delete error = %v, want NotFound", err)
+	}
+}
+
 func TestOrganizationDomainNames(t *testing.T) {
 	t.Parallel()
 
@@ -165,5 +292,15 @@ func TestListOrganizationsClosesBodies(t *testing.T) {
 	}
 	if bodies != 2 {
 		t.Fatalf("expected 2 HTTP round-trips, got %d", bodies)
+	}
+}
+
+func TestOrganizationIDFromLocation(t *testing.T) {
+	t.Parallel()
+	if got := organizationIDFromLocation("http://kc/admin/realms/ai-grid/organizations/abc-123"); got != "abc-123" {
+		t.Fatalf("got %q", got)
+	}
+	if got := organizationIDFromLocation(""); got != "" {
+		t.Fatalf("empty got %q", got)
 	}
 }
