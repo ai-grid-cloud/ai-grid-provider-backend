@@ -425,7 +425,7 @@
         "parameters": [
           {
             "name": "object.id",
-            "description": "Unique identifier of the tenant (Keycloak organization id).",
+            "description": "Unique identifier of the tenant (Keycloak organization id / UUID).",
             "in": "path",
             "required": true,
             "type": "string"
@@ -447,7 +447,7 @@
                   "$ref": "#/definitions/v1TenantStatus"
                 }
               },
-              "description": "A tenant groups resources and users. Backed by a Keycloak Organization."
+              "description": "A tenant groups resources and users.\nBacked by a Keycloak Organization in the shared platform realm (KEYCLOAK_REALM),\nnot by a Keycloak realm per tenant."
             }
           },
           {
@@ -650,7 +650,7 @@
       "properties": {
         "id": {
           "type": "string",
-          "description": "Unique identifier of the tenant (Keycloak organization id)."
+          "description": "Unique identifier of the tenant (Keycloak organization id / UUID)."
         },
         "metadata": {
           "$ref": "#/definitions/v1Metadata"
@@ -662,7 +662,7 @@
           "$ref": "#/definitions/v1TenantStatus"
         }
       },
-      "description": "A tenant groups resources and users. Backed by a Keycloak Organization."
+      "description": "A tenant groups resources and users.\nBacked by a Keycloak Organization in the shared platform realm (KEYCLOAK_REALM),\nnot by a Keycloak realm per tenant."
     },
     "v1TenantSpec": {
       "type": "object",
@@ -672,7 +672,7 @@
           "items": {
             "type": "string"
           },
-          "description": "Email domains associated with this tenant."
+          "description": "Email domains associated with this tenant (DNS hostnames, lowercase)."
         }
       }
     },

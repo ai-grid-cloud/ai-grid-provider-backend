@@ -21,10 +21,12 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-// A tenant groups resources and users. Backed by a Keycloak Organization.
+// A tenant groups resources and users.
+// Backed by a Keycloak Organization in the shared platform realm (KEYCLOAK_REALM),
+// not by a Keycloak realm per tenant.
 type Tenant struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Unique identifier of the tenant (Keycloak organization id).
+	// Unique identifier of the tenant (Keycloak organization id / UUID).
 	Id            string        `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	Metadata      *Metadata     `protobuf:"bytes,2,opt,name=metadata,proto3" json:"metadata,omitempty"`
 	Spec          *TenantSpec   `protobuf:"bytes,3,opt,name=spec,proto3" json:"spec,omitempty"`
@@ -93,7 +95,7 @@ func (x *Tenant) GetStatus() *TenantStatus {
 
 type TenantSpec struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Email domains associated with this tenant.
+	// Email domains associated with this tenant (DNS hostnames, lowercase).
 	Domains       []string `protobuf:"bytes,1,rep,name=domains,proto3" json:"domains,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

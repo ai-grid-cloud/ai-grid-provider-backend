@@ -30,7 +30,8 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// Tenants are represented by Keycloak Organizations in the shared ai-grid realm.
+// Tenants are Keycloak Organizations in the shared platform realm (KEYCLOAK_REALM).
+// They are not Keycloak realms.
 type TenantsClient interface {
 	List(ctx context.Context, in *TenantsListRequest, opts ...grpc.CallOption) (*TenantsListResponse, error)
 	Get(ctx context.Context, in *TenantsGetRequest, opts ...grpc.CallOption) (*TenantsGetResponse, error)
@@ -101,7 +102,8 @@ func (c *tenantsClient) Delete(ctx context.Context, in *TenantsDeleteRequest, op
 // All implementations must embed UnimplementedTenantsServer
 // for forward compatibility.
 //
-// Tenants are represented by Keycloak Organizations in the shared ai-grid realm.
+// Tenants are Keycloak Organizations in the shared platform realm (KEYCLOAK_REALM).
+// They are not Keycloak realms.
 type TenantsServer interface {
 	List(context.Context, *TenantsListRequest) (*TenantsListResponse, error)
 	Get(context.Context, *TenantsGetRequest) (*TenantsGetResponse, error)
