@@ -70,6 +70,29 @@ message TenantsDeleteRequest {
 
 message TenantsDeleteResponse {}
 
+message TenantsListMembersRequest {
+  // Keycloak Organization id (tenant id).
+  string id = 1;
+
+  // Index of the first result. If not specified the default value will be zero.
+  optional int32 offset = 2;
+
+  // Maximum number of results to be returned by the server. When not specified all
+  // the results will be returned (subject to an internal Keycloak page cap).
+  optional int32 limit = 3;
+}
+
+message TenantsListMembersResponse {
+  // Actual number of items returned.
+  int32 size = 1;
+
+  // Total number of members that match (before limit).
+  int32 total = 2;
+
+  // Organization members.
+  repeated TenantMember items = 3;
+}
+
 // Tenants are Keycloak Organizations in the shared platform realm (KEYCLOAK_REALM).
 // They are not Keycloak realms.
 service Tenants {
@@ -102,5 +125,11 @@ service Tenants {
 
   rpc Delete(TenantsDeleteRequest) returns (TenantsDeleteResponse) {
     option (google.api.http) = {delete: "/api/v1/tenants/{id}"};
+  }
+
+  // ListMembers returns Keycloak users that belong to the tenant Organization.
+  // REST uses an AIP-136 custom method to keep the URL space flat (no nested collection).
+  rpc ListMembers(TenantsListMembersRequest) returns (TenantsListMembersResponse) {
+    option (google.api.http) = {get: "/api/v1/tenants/{id}:listMembers"};
   }
 }

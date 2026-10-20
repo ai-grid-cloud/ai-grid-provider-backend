@@ -161,5 +161,14 @@ func (c *Client) DeleteTenant(ctx context.Context, id string) error {
 	return err
 }
 
+// ListTenantMembers returns Keycloak users that belong to the tenant Organization.
+func (c *Client) ListTenantMembers(ctx context.Context, id string) ([]*aigridv1.TenantMember, error) {
+	response, err := c.tenants.ListMembers(ctx, &aigridv1.TenantsListMembersRequest{Id: id})
+	if err != nil {
+		return nil, err
+	}
+	return response.GetItems(), nil
+}
+
 // Close releases the underlying gRPC connection.
 func (c *Client) Close() error { return c.connection.Close() }

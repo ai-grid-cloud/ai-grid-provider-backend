@@ -41,6 +41,7 @@ unwraps them via `response_body: "object"`.
 | `POST` | `/api/v1/tenants` | Create tenant |
 | `PATCH` | `/api/v1/tenants/{id}` | Update name and/or domains |
 | `DELETE` | `/api/v1/tenants/{id}` | Delete tenant |
+| `GET` | `/api/v1/tenants/{id}:listMembers` | List users in the tenant Organization |
 
 Also served (not resource APIs): `GET /openapi.json`, `GET /docs/`.
 
@@ -306,8 +307,8 @@ a Keycloak realm. Admin API paths look like
 `/admin/realms/{platform-realm}/organizations/...`; the `{platform-realm}`
 segment is the shared realm name, not the tenant id.
 
-Users and identity providers (when added later) are realm-scoped resources that
-link to Organizations; they are out of scope for this API today.
+Organization **members** can be listed via `GET .../tenants/{id}:listMembers`.
+Full user CRUD and identity providers remain out of scope for this API today.
 
 | Field | Meaning for UI |
 | --- | --- |
@@ -439,14 +440,52 @@ Notes:
 
 ---
 
+### `GET /api/v1/tenants/{id}:listMembers`
+
+Lists Keycloak users that belong to the tenant’s Organization. Members are **not**
+embedded in `GET /api/v1/tenants/{id}` so tenant reads stay cheap.
+
+Optional query: `offset`, `limit` (same semantics as other List RPCs).
+
+**Response `200`**
+
+```json
+{
+  "size": 2,
+  "total": 2,
+  "items": [
+    {
+      "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "username": "alice",
+      "email": "alice@acme.example.com",
+      "first_name": "Alice",
+      "last_name": "Admin",
+      "enabled": true
+    },
+    {
+      "id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+      "username": "bob",
+      "email": "bob@acme.example.com",
+      "first_name": "Bob",
+      "last_name": "Builder",
+      "enabled": true
+    }
+  ]
+}
+```
+
+gRPC: `ai_grid.v1.Tenants/ListMembers` with `{"id":"<org-uuid>"}`.
+
+---
+
 ## 4. What is not in this API (yet)
 
 Do not expect these from provider-backend today:
 
 - Browser login / token exchange / session APIs
-- Users, groups, subscriptions
+- User create/update/delete, groups, subscriptions (read-only org member list exists)
 - Models / placements / locations
-- Nested collection URLs (everything is flat under `/api/v1/...`)
+- Nested collection URLs (everything is flat under `/api/v1/...`; member list uses `:listMembers`)
 - Evaluated `filter` / `order` / optimistic `lock`
 - PoC-shaped flat `GridCluster` arrays or PoC tenant + IdP config blobs
 

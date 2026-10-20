@@ -279,6 +279,38 @@ func TestOrganizationDomainNames(t *testing.T) {
 	}
 }
 
+func TestListOrganizationMembers(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/token") {
+			_ = json.NewEncoder(w).Encode(map[string]string{"access_token": "test-token"})
+			return
+		}
+		if r.Method != http.MethodGet || !strings.Contains(r.URL.Path, "/members") {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode([]OrganizationMember{
+			{ID: "u1", Username: "alice", Email: "alice@example.com", Enabled: true},
+			{ID: "u2", Username: "bob", FirstName: "Bob", LastName: "Builder"},
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	client := New(Config{
+		BaseURL: server.URL, AdminRealm: "master", Realm: "ai-grid",
+		Username: "admin", Password: "admin", HTTPClient: server.Client(),
+	})
+	got, err := client.ListOrganizationMembers(context.Background(), "org-1")
+	if err != nil {
+		t.Fatalf("ListOrganizationMembers() error = %v", err)
+	}
+	if len(got) != 2 || got[0].Username != "alice" || got[1].Username != "bob" {
+		t.Fatalf("ListOrganizationMembers() = %+v", got)
+	}
+}
+
 func TestUpdateOrganizationPreservesAttributes(t *testing.T) {
 	t.Parallel()
 

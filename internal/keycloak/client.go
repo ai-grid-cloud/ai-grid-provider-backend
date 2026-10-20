@@ -59,6 +59,18 @@ type OrganizationDomain struct {
 	Verified bool   `json:"verified,omitempty"`
 }
 
+// OrganizationMember is a Keycloak user belonging to an Organization.
+// Fields match the Admin API brief/full user representation used by
+// GET /admin/realms/{realm}/organizations/{id}/members.
+type OrganizationMember struct {
+	ID        string `json:"id,omitempty"`
+	Username  string `json:"username,omitempty"`
+	Email     string `json:"email,omitempty"`
+	FirstName string `json:"firstName,omitempty"`
+	LastName  string `json:"lastName,omitempty"`
+	Enabled   bool   `json:"enabled,omitempty"`
+}
+
 // Organization is a Keycloak Organization in the configured realm.
 // Extra fields (Enabled, Description, RedirectURL, Attributes) are preserved
 // through GET→modify→PUT so Keycloak replacement semantics do not clear them.
@@ -214,6 +226,24 @@ func (c *Client) DeleteOrganization(ctx context.Context, id string) error {
 	return c.doJSON(ctx, http.MethodDelete, c.orgURL(id), token, nil, nil, "delete organization")
 }
 
+// ListOrganizationMembers lists users that belong to a Keycloak Organization.
+// Uses first/max pagination against the Admin API (default first=0, max=100).
+func (c *Client) ListOrganizationMembers(ctx context.Context, orgID string) ([]OrganizationMember, error) {
+	if strings.TrimSpace(orgID) == "" {
+		return nil, fmt.Errorf("organization id is required")
+	}
+	token, err := c.token(ctx)
+	if err != nil {
+		return nil, err
+	}
+	endpoint := c.orgMembersURL(orgID) + "?first=0&max=" + strconv.Itoa(100)
+	var members []OrganizationMember
+	if err := c.doJSON(ctx, http.MethodGet, endpoint, token, nil, &members, "list organization members"); err != nil {
+		return nil, err
+	}
+	return members, nil
+}
+
 // DomainNames returns the domain name strings for an organization.
 func (o Organization) DomainNames() []string {
 	domains := make([]string, 0, len(o.Domains))
@@ -322,6 +352,10 @@ func (c *Client) orgsURL() string {
 
 func (c *Client) orgURL(id string) string {
 	return c.orgsURL() + "/" + url.PathEscape(id)
+}
+
+func (c *Client) orgMembersURL(id string) string {
+	return c.orgURL(id) + "/members"
 }
 
 func organizationIDFromLocation(location string) string {

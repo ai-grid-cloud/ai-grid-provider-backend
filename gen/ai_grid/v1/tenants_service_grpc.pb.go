@@ -19,11 +19,12 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Tenants_List_FullMethodName   = "/ai_grid.v1.Tenants/List"
-	Tenants_Get_FullMethodName    = "/ai_grid.v1.Tenants/Get"
-	Tenants_Create_FullMethodName = "/ai_grid.v1.Tenants/Create"
-	Tenants_Update_FullMethodName = "/ai_grid.v1.Tenants/Update"
-	Tenants_Delete_FullMethodName = "/ai_grid.v1.Tenants/Delete"
+	Tenants_List_FullMethodName        = "/ai_grid.v1.Tenants/List"
+	Tenants_Get_FullMethodName         = "/ai_grid.v1.Tenants/Get"
+	Tenants_Create_FullMethodName      = "/ai_grid.v1.Tenants/Create"
+	Tenants_Update_FullMethodName      = "/ai_grid.v1.Tenants/Update"
+	Tenants_Delete_FullMethodName      = "/ai_grid.v1.Tenants/Delete"
+	Tenants_ListMembers_FullMethodName = "/ai_grid.v1.Tenants/ListMembers"
 )
 
 // TenantsClient is the client API for Tenants service.
@@ -38,6 +39,9 @@ type TenantsClient interface {
 	Create(ctx context.Context, in *TenantsCreateRequest, opts ...grpc.CallOption) (*TenantsCreateResponse, error)
 	Update(ctx context.Context, in *TenantsUpdateRequest, opts ...grpc.CallOption) (*TenantsUpdateResponse, error)
 	Delete(ctx context.Context, in *TenantsDeleteRequest, opts ...grpc.CallOption) (*TenantsDeleteResponse, error)
+	// ListMembers returns Keycloak users that belong to the tenant Organization.
+	// REST uses an AIP-136 custom method to keep the URL space flat (no nested collection).
+	ListMembers(ctx context.Context, in *TenantsListMembersRequest, opts ...grpc.CallOption) (*TenantsListMembersResponse, error)
 }
 
 type tenantsClient struct {
@@ -98,6 +102,16 @@ func (c *tenantsClient) Delete(ctx context.Context, in *TenantsDeleteRequest, op
 	return out, nil
 }
 
+func (c *tenantsClient) ListMembers(ctx context.Context, in *TenantsListMembersRequest, opts ...grpc.CallOption) (*TenantsListMembersResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TenantsListMembersResponse)
+	err := c.cc.Invoke(ctx, Tenants_ListMembers_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // TenantsServer is the server API for Tenants service.
 // All implementations must embed UnimplementedTenantsServer
 // for forward compatibility.
@@ -110,6 +124,9 @@ type TenantsServer interface {
 	Create(context.Context, *TenantsCreateRequest) (*TenantsCreateResponse, error)
 	Update(context.Context, *TenantsUpdateRequest) (*TenantsUpdateResponse, error)
 	Delete(context.Context, *TenantsDeleteRequest) (*TenantsDeleteResponse, error)
+	// ListMembers returns Keycloak users that belong to the tenant Organization.
+	// REST uses an AIP-136 custom method to keep the URL space flat (no nested collection).
+	ListMembers(context.Context, *TenantsListMembersRequest) (*TenantsListMembersResponse, error)
 	mustEmbedUnimplementedTenantsServer()
 }
 
@@ -134,6 +151,9 @@ func (UnimplementedTenantsServer) Update(context.Context, *TenantsUpdateRequest)
 }
 func (UnimplementedTenantsServer) Delete(context.Context, *TenantsDeleteRequest) (*TenantsDeleteResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Delete not implemented")
+}
+func (UnimplementedTenantsServer) ListMembers(context.Context, *TenantsListMembersRequest) (*TenantsListMembersResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListMembers not implemented")
 }
 func (UnimplementedTenantsServer) mustEmbedUnimplementedTenantsServer() {}
 func (UnimplementedTenantsServer) testEmbeddedByValue()                 {}
@@ -246,6 +266,24 @@ func _Tenants_Delete_Handler(srv interface{}, ctx context.Context, dec func(inte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Tenants_ListMembers_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TenantsListMembersRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TenantsServer).ListMembers(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Tenants_ListMembers_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TenantsServer).ListMembers(ctx, req.(*TenantsListMembersRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Tenants_ServiceDesc is the grpc.ServiceDesc for Tenants service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -272,6 +310,10 @@ var Tenants_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Delete",
 			Handler:    _Tenants_Delete_Handler,
+		},
+		{
+			MethodName: "ListMembers",
+			Handler:    _Tenants_ListMembers_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

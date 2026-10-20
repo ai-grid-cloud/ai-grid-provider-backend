@@ -32,6 +32,7 @@ type organizationClient interface {
 	CreateOrganization(ctx context.Context, org keycloak.Organization) (keycloak.Organization, error)
 	UpdateOrganization(ctx context.Context, org keycloak.Organization) (keycloak.Organization, error)
 	DeleteOrganization(ctx context.Context, id string) error
+	ListOrganizationMembers(ctx context.Context, orgID string) ([]keycloak.OrganizationMember, error)
 }
 
 // TenantsServerBuilder configures a TenantsServer.
@@ -219,6 +220,32 @@ func (s *TenantsServer) Delete(ctx context.Context, req *aigridv1.TenantsDeleteR
 	return &aigridv1.TenantsDeleteResponse{}, nil
 }
 
+// ListMembers returns Keycloak users that belong to the tenant Organization.
+func (s *TenantsServer) ListMembers(ctx context.Context, req *aigridv1.TenantsListMembersRequest) (*aigridv1.TenantsListMembersResponse, error) {
+	id := req.GetId()
+	if err := validateTenantID(id); err != nil {
+		return nil, err
+	}
+	// Ensure the tenant exists so missing orgs map to NotFound (not an empty list).
+	if _, err := s.tenants.GetOrganization(ctx, id); err != nil {
+		return nil, mapTenantKeycloakError("get", id, err)
+	}
+	members, err := s.tenants.ListOrganizationMembers(ctx, id)
+	if err != nil {
+		return nil, mapTenantKeycloakError("list members", id, err)
+	}
+	items := make([]*aigridv1.TenantMember, 0, len(members))
+	for _, member := range members {
+		items = append(items, tenantMemberFromOrganizationMember(member))
+	}
+	page, total := applyListWindow(items, req.Offset, req.Limit)
+	return &aigridv1.TenantsListMembersResponse{
+		Size:  int32(len(page)),
+		Total: total,
+		Items: page,
+	}, nil
+}
+
 func tenantFromOrganization(organization keycloak.Organization) *aigridv1.Tenant {
 	return &aigridv1.Tenant{
 		Id: organization.ID,
@@ -229,6 +256,17 @@ func tenantFromOrganization(organization keycloak.Organization) *aigridv1.Tenant
 			Domains: organization.DomainNames(),
 		},
 		Status: &aigridv1.TenantStatus{},
+	}
+}
+
+func tenantMemberFromOrganizationMember(member keycloak.OrganizationMember) *aigridv1.TenantMember {
+	return &aigridv1.TenantMember{
+		Id:        member.ID,
+		Username:  member.Username,
+		Email:     member.Email,
+		FirstName: member.FirstName,
+		LastName:  member.LastName,
+		Enabled:   member.Enabled,
 	}
 }
 

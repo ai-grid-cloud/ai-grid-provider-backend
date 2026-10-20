@@ -206,6 +206,7 @@ else
   if [[ -n "$smoke_tenant_id" ]]; then
     cleanup_tenant_ids+=("$smoke_tenant_id")
     call_grpc 'Tenants/Get' "{\"id\":\"${smoke_tenant_id}\"}" 'ai_grid.v1.Tenants/Get'
+    call_grpc 'Tenants/ListMembers' "{\"id\":\"${smoke_tenant_id}\"}" 'ai_grid.v1.Tenants/ListMembers'
     call_grpc 'Tenants/Update (update_mask=spec.domains)' \
       "{\"object\":{\"id\":\"${smoke_tenant_id}\",\"metadata\":{\"name\":\"${smoke_tenant_grpc}\"},\"spec\":{\"domains\":[\"smoke-updated.example.com\"]}},\"update_mask\":{\"paths\":[\"spec.domains\"]}}" \
       'ai_grid.v1.Tenants/Update'
@@ -232,6 +233,7 @@ else
   if [[ -n "$smoke_tenant_id" ]]; then
     cleanup_tenant_ids+=("$smoke_tenant_id")
     call_http "GET /api/v1/tenants/${smoke_tenant_id}" GET "/api/v1/tenants/${smoke_tenant_id}"
+    call_http "GET /api/v1/tenants/${smoke_tenant_id}:listMembers" GET "/api/v1/tenants/${smoke_tenant_id}:listMembers"
     call_http "PATCH /api/v1/tenants/${smoke_tenant_id}" PATCH "/api/v1/tenants/${smoke_tenant_id}" \
       "{\"id\":\"${smoke_tenant_id}\",\"metadata\":{\"name\":\"${smoke_tenant_rest}\"},\"spec\":{\"domains\":[\"smoke-rest-updated.example.com\"]}}"
     call_http "DELETE /api/v1/tenants/${smoke_tenant_id}" DELETE "/api/v1/tenants/${smoke_tenant_id}"

@@ -870,6 +870,46 @@ func TestUpdateTenant(t *testing.T) {
 	})
 }
 
+func TestListTenantMembers(t *testing.T) {
+	t.Parallel()
+
+	t.Run("lists members", func(t *testing.T) {
+		t.Parallel()
+		store := newFakeOrganizationStore(
+			keycloak.Organization{ID: "org-1", Name: "acme"},
+		)
+		store.members["org-1"] = []keycloak.OrganizationMember{
+			{ID: "u1", Username: "alice", Email: "alice@acme.example.com", Enabled: true},
+			{ID: "u2", Username: "bob", FirstName: "Bob", LastName: "Builder", Enabled: false},
+		}
+		server := mustTenantsServer(t, store)
+		got, err := server.ListMembers(context.Background(), &aigridv1.TenantsListMembersRequest{Id: "org-1"})
+		if err != nil {
+			t.Fatalf("ListMembers() error = %v", err)
+		}
+		if got.GetTotal() != 2 || got.GetSize() != 2 || len(got.GetItems()) != 2 {
+			t.Fatalf("ListMembers() = %+v", got)
+		}
+		if got.GetItems()[0].GetUsername() != "alice" || got.GetItems()[1].GetUsername() != "bob" {
+			t.Fatalf("items = %+v", got.GetItems())
+		}
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		t.Parallel()
+		server := mustTenantsServer(t, newFakeOrganizationStore())
+		_, err := server.ListMembers(context.Background(), &aigridv1.TenantsListMembersRequest{Id: "missing"})
+		assertGRPCCode(t, err, codes.NotFound)
+	})
+
+	t.Run("requires id", func(t *testing.T) {
+		t.Parallel()
+		server := mustTenantsServer(t, newFakeOrganizationStore())
+		_, err := server.ListMembers(context.Background(), &aigridv1.TenantsListMembersRequest{})
+		assertGRPCCode(t, err, codes.InvalidArgument)
+	})
+}
+
 func TestDeleteTenant(t *testing.T) {
 	t.Parallel()
 
@@ -897,12 +937,16 @@ func TestDeleteTenant(t *testing.T) {
 type fakeOrganizationStore struct {
 	mu      sync.Mutex
 	byID    map[string]keycloak.Organization
+	members map[string][]keycloak.OrganizationMember
 	next    int
 	listErr error
 }
 
 func newFakeOrganizationStore(orgs ...keycloak.Organization) *fakeOrganizationStore {
-	store := &fakeOrganizationStore{byID: make(map[string]keycloak.Organization, len(orgs))}
+	store := &fakeOrganizationStore{
+		byID:    make(map[string]keycloak.Organization, len(orgs)),
+		members: make(map[string][]keycloak.OrganizationMember),
+	}
 	for _, org := range orgs {
 		store.byID[org.ID] = org
 	}
@@ -962,6 +1006,17 @@ func (f *fakeOrganizationStore) UpdateOrganization(_ context.Context, org keyclo
 	}
 	f.byID[org.ID] = org
 	return org, nil
+}
+
+func (f *fakeOrganizationStore) ListOrganizationMembers(_ context.Context, orgID string) ([]keycloak.OrganizationMember, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.byID[orgID]; !ok {
+		return nil, &keycloak.APIError{Op: "list organization members", StatusCode: http.StatusNotFound}
+	}
+	out := make([]keycloak.OrganizationMember, len(f.members[orgID]))
+	copy(out, f.members[orgID])
+	return out, nil
 }
 
 func (f *fakeOrganizationStore) DeleteOrganization(_ context.Context, id string) error {

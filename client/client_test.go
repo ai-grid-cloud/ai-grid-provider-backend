@@ -258,6 +258,7 @@ type organizationClient interface {
 	CreateOrganization(ctx context.Context, org keycloak.Organization) (keycloak.Organization, error)
 	UpdateOrganization(ctx context.Context, org keycloak.Organization) (keycloak.Organization, error)
 	DeleteOrganization(ctx context.Context, id string) error
+	ListOrganizationMembers(ctx context.Context, orgID string) ([]keycloak.OrganizationMember, error)
 }
 
 type mutableOrganizationStore struct {
@@ -314,6 +315,10 @@ func (f *mutableOrganizationStore) DeleteOrganization(_ context.Context, id stri
 	}
 	delete(f.byID, id)
 	return nil
+}
+
+func (f *mutableOrganizationStore) ListOrganizationMembers(context.Context, string) ([]keycloak.OrganizationMember, error) {
+	return nil, nil
 }
 
 func startTestClient(t *testing.T, objects []runtime.Object, orgs organizationClient) (*clientpkg.Client, func()) {
@@ -408,6 +413,10 @@ func (f fakeOrganizationLister) UpdateOrganization(context.Context, keycloak.Org
 
 func (f fakeOrganizationLister) DeleteOrganization(context.Context, string) error {
 	return errors.New("DeleteOrganization not implemented in list-only fake")
+}
+
+func (f fakeOrganizationLister) ListOrganizationMembers(context.Context, string) ([]keycloak.OrganizationMember, error) {
+	return nil, errors.New("ListOrganizationMembers not implemented in list-only fake")
 }
 
 func managedCluster(name string, labels map[string]string, accepts bool) *unstructured.Unstructured {
