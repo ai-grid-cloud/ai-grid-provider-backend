@@ -246,7 +246,7 @@ make lint             # gofmt check and go vet; uses golangci-lint when installe
 make verify           # build, unit, and lint
 make run              # run the API locally against your kubeconfig
 make image            # build container image (Podman); alias: container
-make push             # push container image to Quay
+make push             # push container image (ghcr.io)
 make build-and-push   # image + push
 make kind-test        # full Podman/Kind integration test
 make dev-fake         # real backend on fake hub + fake Keycloak (see below)
@@ -389,18 +389,28 @@ Kind-parity stack for a logged-in OpenShift cluster (`oc whoami`): backend,
 optional embedded Keycloak + Postgres (Tenants API), Routes for HTTP and gRPC,
 RHACM when needed (Clusters API), and sample ManagedClusters.
 
-Default image: [`quay.io/rh-ee-rjjohnso/ai-grid-provider-backend`](https://quay.io/repository/rh-ee-rjjohnso/ai-grid-provider-backend).
+Default image: [`ghcr.io/ai-grid-cloud/ai-grid-provider-backend`](https://github.com/ai-grid-cloud/ai-grid-provider-backend/pkgs/container/ai-grid-provider-backend).
 
 CI (`.github/workflows/ci.yaml`) runs the Check job on pull requests and on
-pushes to `main` / `development` (build, lint, unit tests, generated-file
-verify). Image build/push to Quay runs only on push (`latest` on `main`,
-`development` on `development`, plus `sha-*`). Set repository secrets
-`QUAY_USERNAME` and `QUAY_PASSWORD`.
+pushes to `main` and `v*` tags (build, lint, unit tests, generated-file
+verify). After Check passes, pushes, tags and manual runs publish the image to
+ghcr.io: `sha-<full sha>` every time (pin deployments to it), `latest` on
+`main`, and semver from `v*` tags. It pushes with `GITHUB_TOKEN`; no repository
+secrets are needed.
+A new ghcr package starts private: when CI first publishes a new image, an
+organization owner sets the package's visibility to Public, or clusters need a
+pull secret.
 
-Publish locally (Quay login required once: `podman login quay.io`):
+Pull requests also get an image: `publish-image.yml` builds it without
+credentials, `publish-pr-image.yml` pushes it as `pr-<number>` (never `sha-*`,
+`latest` or semver), `cleanup-pr-image.yml` deletes it when the PR closes, and
+`prune-images.yml` removes `pr-*` and untagged versions older than 30 days
+every Monday.
+
+Publish locally (login required once: `podman login ghcr.io`):
 
 ```sh
-make image              # build linux/amd64 → quay.io/rh-ee-rjjohnso/ai-grid-provider-backend:latest
+make image              # build linux/amd64 → ghcr.io/ai-grid-cloud/ai-grid-provider-backend:latest
 make push               # push that tag
 make build-and-push     # image + push
 # TAG=dev make build-and-push
@@ -436,6 +446,13 @@ INSTALL_ACM=1 make openshift-up
 # Skip sample ManagedClusters on hubs that already have real ACM clusters
 APPLY_SAMPLES=0 make openshift-up
 ```
+
+Clusters `List`, `Get` and `Update` report each cluster's `status.provisioning`
+from the hub Policy named by `AI_GRID_READY_POLICY` (`namespace/name`, default
+`ai-grid-policies/ai-grid-ready`). The ClusterRole in
+`deploy/openshift/rbac.yaml` grants `get` on Policies with that name only, in
+any namespace; change its `resourceNames` if you change the variable. Without
+that permission, or without the Policy, `provisioning` is empty.
 
 If Keycloak or Postgres pods are rejected by SCC, re-run with
 `GRANT_ANYUID=1` (or grant `anyuid` to the `default` SA in `ai-grid`).
