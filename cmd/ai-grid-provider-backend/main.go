@@ -8,8 +8,10 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -19,6 +21,7 @@ import (
 	grpchealth "connectrpc.com/grpchealth/v2"
 	grpcreflect "connectrpc.com/grpcreflect/v2"
 	"github.com/osac-project/ai-grid-provider-backend/gen/ai_grid/v1/aigridv1connect"
+	"github.com/osac-project/ai-grid-provider-backend/internal/gitops"
 	"github.com/osac-project/ai-grid-provider-backend/internal/keycloak"
 	"github.com/osac-project/ai-grid-provider-backend/internal/restgateway"
 	"github.com/osac-project/ai-grid-provider-backend/internal/servers"
@@ -80,10 +83,23 @@ func main() {
 		fmt.Fprintf(os.Stderr, "build Models server: %v\n", err)
 		os.Exit(1)
 	}
-	subscriptionsServer, err := servers.NewSubscriptionsServer().
+	subscriptionsBuilder := servers.NewSubscriptionsServer().
 		SetDynamicClient(kubeClient).
-		SetNamespace(getEnv("AI_GRID_SUBSCRIPTION_NAMESPACE", "models-as-a-service")).
-		Build()
+		SetNamespace(getEnv("AI_GRID_SUBSCRIPTION_NAMESPACE", "models-as-a-service"))
+	switch mode := getEnv("AI_GRID_WRITE_MODE", "cluster"); mode {
+	case "cluster":
+	case "git":
+		writer, err := newGitWriter()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "git write mode: %v\n", err)
+			os.Exit(1)
+		}
+		subscriptionsBuilder.SetWriter(writer)
+	default:
+		fmt.Fprintf(os.Stderr, "AI_GRID_WRITE_MODE %q: want cluster or git\n", mode)
+		os.Exit(1)
+	}
+	subscriptionsServer, err := subscriptionsBuilder.Build()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "build Subscriptions server: %v\n", err)
 		os.Exit(1)
@@ -183,6 +199,39 @@ func getEnv(name, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+// newGitWriter clones the repository that git write mode commits to. The
+// token is read from a file, a mounted Secret, so it never appears in the
+// environment or in logs.
+func newGitWriter() (*gitops.RepoWriter, error) {
+	cfg := gitops.RepoConfig{
+		URL:         os.Getenv("AI_GRID_GIT_URL"),
+		Branch:      getEnv("AI_GRID_GIT_BRANCH", "main"),
+		AuthorName:  "ai-grid-provider-backend",
+		AuthorEmail: "ai-grid-provider-backend@noreply.invalid",
+	}
+	if cfg.URL == "" {
+		return nil, errors.New("AI_GRID_GIT_URL is required")
+	}
+	if u, err := url.Parse(cfg.URL); err != nil || u.User != nil {
+		return nil, errors.New("AI_GRID_GIT_URL must be a URL without credentials; put the token in AI_GRID_GIT_TOKEN_FILE")
+	}
+	if tokenFile := os.Getenv("AI_GRID_GIT_TOKEN_FILE"); tokenFile != "" {
+		token, err := os.ReadFile(tokenFile)
+		if err != nil {
+			return nil, fmt.Errorf("read AI_GRID_GIT_TOKEN_FILE: %w", err)
+		}
+		cfg.Token = strings.TrimSpace(string(token))
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	writer, err := gitops.NewRepoWriter(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	slog.Info("git write mode", "url", cfg.URL, "branch", cfg.Branch)
+	return writer, nil
 }
 
 func newDynamicClient(kubeconfig string) (dynamic.Interface, error) {

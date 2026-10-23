@@ -553,6 +553,12 @@ Requires a kubeconfig that can reach a cluster with the MaaS CRDs. Both
 subscription and auth-policy objects live in
 `AI_GRID_SUBSCRIPTION_NAMESPACE` (default `models-as-a-service`).
 
+In git write mode (`AI_GRID_WRITE_MODE=git`, README "Git write mode for
+Subscriptions"), the same API commits to a Git repository instead. Differences
+a UI sees: `spec.organization.id` is required; `spec.owner.groups` take bare
+group names (no `<organization>/` prefix, which the backend adds); `status` is
+empty; Get returns the paired policy and no model registrations.
+
 **AuthPolicy pairing (server side-effect):** every Create also creates a managed
 `MaaSAuthPolicy` named `<id>-policy` in the same namespace (subjects from
 `owner`, model refs without rate limits). Labels:
