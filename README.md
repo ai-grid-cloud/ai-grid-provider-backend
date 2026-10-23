@@ -110,6 +110,13 @@ In git mode:
   names. The file holds `<organization id>/<group>`, the tenant-qualified form,
   and reads return the bare names.
 - `status` is empty: the backend doesn't read status back from the clusters yet.
+- A model ref without a namespace gets the subscription's namespace
+  (`models-as-a-service` by default), where git mode writes the models'
+  `MaaSModelRef`s.
+- Keep a file that isn't `*.yaml`, such as a `README.md`, in
+  `catalog/subscriptions/`. Git drops an empty directory, so without it
+  deleting the last subscription removes the path, and Argo CD reports an error
+  instead of pruning. List reads only `*.yaml` files.
 
 To try it locally, point `AI_GRID_GIT_URL` at a bare repository on disk and run
 `AI_GRID_WRITE_MODE=git AI_GRID_GIT_URL=/path/to/repo.git make dev-fake`.

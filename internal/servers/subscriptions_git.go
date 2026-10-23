@@ -212,12 +212,19 @@ func validateGitOwner(spec *aigridv1.SubscriptionSpec) error {
 
 // renderSubscriptionDoc renders the subscription file. Owner groups get the
 // organization prefix, and the version annotation is set on the subscription.
+// A model ref without a namespace gets the subscription's namespace, where git
+// mode writes each model's MaaSModelRef, instead of cluster mode's default.
 func renderSubscriptionDoc(object *aigridv1.Subscription, namespace string, version int32) ([]byte, error) {
 	qualified := proto.CloneOf(object)
 	org := qualified.GetSpec().GetOrganization().GetId()
 	if owner := qualified.GetSpec().GetOwner(); owner != nil {
 		for i, group := range owner.Groups {
 			owner.Groups[i] = org + "/" + group
+		}
+	}
+	for _, ref := range qualified.GetSpec().GetModelRefs() {
+		if ref.GetNamespace() == "" {
+			ref.Namespace = namespace
 		}
 	}
 

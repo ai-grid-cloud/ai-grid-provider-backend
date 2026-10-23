@@ -306,3 +306,26 @@ func groupNames(t *testing.T, obj *unstructured.Unstructured, fields ...string) 
 	}
 	return out
 }
+
+// A model ref without a namespace points at the catalog entry in the
+// subscription's own namespace, where git mode writes MaaSModelRefs, not at
+// cluster mode's "llm" default.
+func TestSubscriptionsGitModelRefNamespaceDefault(t *testing.T) {
+	t.Parallel()
+	writer := gitops.NewMemoryWriter(nil)
+	srv := mustGitSubscriptionsServer(t, writer)
+
+	object := gitSampleSubscription("team-a")
+	object.Spec.ModelRefs[0].Namespace = ""
+	if _, err := srv.Create(context.Background(), &aigridv1.SubscriptionsCreateRequest{Object: object}); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	sub, policy := readGitSubscriptionFile(t, writer, "team-a")
+	for _, obj := range []*unstructured.Unstructured{sub, policy} {
+		refs, _, _ := unstructured.NestedSlice(obj.Object, "spec", "modelRefs")
+		if len(refs) != 1 || refs[0].(map[string]interface{})["namespace"] != "models-as-a-service" {
+			t.Fatalf("file %s modelRefs = %v, want namespace models-as-a-service", obj.GetKind(), refs)
+		}
+	}
+}
