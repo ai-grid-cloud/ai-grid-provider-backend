@@ -13,6 +13,7 @@ import (
 	aigridv1 "github.com/osac-project/ai-grid-provider-backend/gen/ai_grid/v1"
 	"github.com/osac-project/ai-grid-provider-backend/gen/ai_grid/v1/aigridv1connect"
 	"github.com/osac-project/ai-grid-provider-backend/internal/celfilter"
+	"github.com/osac-project/ai-grid-provider-backend/internal/gitops"
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -25,16 +26,20 @@ import (
 type SubscriptionsServerBuilder struct {
 	logger    *slog.Logger
 	client    dynamic.Interface
+	writer    gitops.Writer
 	namespace string
 }
 
 // SubscriptionsServer implements ai_grid.v1.Subscriptions against namespaced
 // MaaSSubscription CRs. Create/Update/Delete also maintain a managed
-// MaaSAuthPolicy named <id>-policy in the same namespace.
+// MaaSAuthPolicy named <id>-policy in the same namespace. With a Writer (git
+// mode) it reads and commits both to a Git repository instead, and never
+// calls the cluster (subscriptions_git.go).
 type SubscriptionsServer struct {
 	aigridv1connect.UnimplementedSubscriptionsHandler
 	logger    *slog.Logger
 	client    dynamic.Interface
+	writer    gitops.Writer
 	namespace string
 }
 
@@ -51,9 +56,17 @@ func (b *SubscriptionsServerBuilder) SetLogger(logger *slog.Logger) *Subscriptio
 	return b
 }
 
-// SetDynamicClient sets the Kubernetes dynamic client. Mandatory.
+// SetDynamicClient sets the Kubernetes dynamic client. Mandatory unless a
+// Writer is set.
 func (b *SubscriptionsServerBuilder) SetDynamicClient(client dynamic.Interface) *SubscriptionsServerBuilder {
 	b.client = client
+	return b
+}
+
+// SetWriter switches the server to git mode: subscriptions are read from and
+// committed to the Writer's branch. Optional.
+func (b *SubscriptionsServerBuilder) SetWriter(writer gitops.Writer) *SubscriptionsServerBuilder {
+	b.writer = writer
 	return b
 }
 
@@ -66,8 +79,8 @@ func (b *SubscriptionsServerBuilder) SetNamespace(namespace string) *Subscriptio
 
 // Build creates the SubscriptionsServer.
 func (b *SubscriptionsServerBuilder) Build() (*SubscriptionsServer, error) {
-	if b.client == nil {
-		return nil, errors.New("kubernetes dynamic client is mandatory")
+	if b.client == nil && b.writer == nil {
+		return nil, errors.New("kubernetes dynamic client or git writer is mandatory")
 	}
 	logger := b.logger
 	if logger == nil {
@@ -77,22 +90,15 @@ func (b *SubscriptionsServerBuilder) Build() (*SubscriptionsServer, error) {
 	if namespace == "" {
 		namespace = defaultSubscriptionNamespace
 	}
-	return &SubscriptionsServer{logger: logger, client: b.client, namespace: namespace}, nil
+	return &SubscriptionsServer{logger: logger, client: b.client, writer: b.writer, namespace: namespace}, nil
 }
 
 // List returns MaaSSubscription objects from the configured namespace.
 // Pipeline: map CRs → CEL filter → allowlisted order → offset/limit → enrich page.
 func (s *SubscriptionsServer) List(ctx context.Context, req *aigridv1.SubscriptionsListRequest) (*aigridv1.SubscriptionsListResponse, error) {
-	list, err := s.client.Resource(maasSubscriptionsResource).Namespace(s.namespace).List(ctx, metav1.ListOptions{})
+	items, err := s.listItems(ctx)
 	if err != nil {
-		if apierrors.IsNotFound(err) {
-			return &aigridv1.SubscriptionsListResponse{}, nil
-		}
-		return nil, connect.Errorf(connect.CodeInternal, "list MaaSSubscription resources: %v", err).WithCause(err)
-	}
-	items := make([]*aigridv1.Subscription, 0, len(list.Items))
-	for _, item := range list.Items {
-		items = append(items, subscriptionFromUnstructured(item))
+		return nil, err
 	}
 
 	filter, err := celfilter.Compile(req.GetFilter(), &aigridv1.Subscription{})
@@ -119,8 +125,10 @@ func (s *SubscriptionsServer) List(ctx context.Context, req *aigridv1.Subscripti
 	}
 
 	page, total := applyListWindow(items, req.Offset, req.Limit)
-	for _, sub := range page {
-		enrichModelRefsFromAnnotations(sub, s.loadModelRefs(ctx, sub))
+	if s.writer == nil {
+		for _, sub := range page {
+			enrichModelRefsFromAnnotations(sub, s.loadModelRefs(ctx, sub))
+		}
 	}
 	return &aigridv1.SubscriptionsListResponse{
 		Size:  int32(len(page)),
@@ -129,11 +137,32 @@ func (s *SubscriptionsServer) List(ctx context.Context, req *aigridv1.Subscripti
 	}, nil
 }
 
+func (s *SubscriptionsServer) listItems(ctx context.Context) ([]*aigridv1.Subscription, error) {
+	if s.writer != nil {
+		return s.gitList(ctx)
+	}
+	list, err := s.client.Resource(maasSubscriptionsResource).Namespace(s.namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, connect.Errorf(connect.CodeInternal, "list MaaSSubscription resources: %v", err).WithCause(err)
+	}
+	items := make([]*aigridv1.Subscription, 0, len(list.Items))
+	for _, item := range list.Items {
+		items = append(items, subscriptionFromUnstructured(item))
+	}
+	return items, nil
+}
+
 // Get returns a MaaSSubscription plus covering AuthPolicies and ModelRegistrations.
 func (s *SubscriptionsServer) Get(ctx context.Context, req *aigridv1.SubscriptionsGetRequest) (*aigridv1.SubscriptionsGetResponse, error) {
 	id := req.GetId()
 	if err := validateSubscriptionID(id); err != nil {
 		return nil, err
+	}
+	if s.writer != nil {
+		return s.gitGet(ctx, id)
 	}
 	obj, err := s.client.Resource(maasSubscriptionsResource).Namespace(s.namespace).Get(ctx, id, metav1.GetOptions{})
 	if err != nil {
@@ -175,6 +204,9 @@ func (s *SubscriptionsServer) Create(ctx context.Context, req *aigridv1.Subscrip
 	}
 	if err := validateSubscriptionSpec(object.GetSpec()); err != nil {
 		return nil, err
+	}
+	if s.writer != nil {
+		return s.gitCreate(ctx, object)
 	}
 
 	policyName := authPolicyNameForSubscription(id)
@@ -218,6 +250,9 @@ func (s *SubscriptionsServer) Update(ctx context.Context, req *aigridv1.Subscrip
 	id := subscriptionID(object)
 	if err := validateSubscriptionID(id); err != nil {
 		return nil, err
+	}
+	if s.writer != nil {
+		return s.gitUpdate(ctx, req)
 	}
 
 	current, err := s.client.Resource(maasSubscriptionsResource).Namespace(s.namespace).Get(ctx, id, metav1.GetOptions{})
@@ -308,6 +343,12 @@ func (s *SubscriptionsServer) Delete(ctx context.Context, req *aigridv1.Subscrip
 	id := req.GetId()
 	if err := validateSubscriptionID(id); err != nil {
 		return nil, err
+	}
+	if s.writer != nil {
+		if err := s.gitDelete(ctx, id); err != nil {
+			return nil, err
+		}
+		return &aigridv1.SubscriptionsDeleteResponse{}, nil
 	}
 	err := s.client.Resource(maasSubscriptionsResource).Namespace(s.namespace).Delete(ctx, id, metav1.DeleteOptions{})
 	if err != nil {

@@ -86,6 +86,41 @@ Point `--kubeconfig` at a cluster that has those CRDs (for example an RHOAI
 spoke with MaaS). Create/Update/Delete always maintain a paired AuthPolicy
 named `<subscription-id>-policy` when managed by this service.
 
+### Git write mode for Subscriptions
+
+With `AI_GRID_WRITE_MODE=git` (the default is `cluster`), the Subscriptions
+RPCs read from and commit to a Git repository instead of the cluster, and Argo
+CD delivers the files. Each subscription is one file,
+`catalog/subscriptions/<id>.yaml`, holding its `MaaSSubscription` and its
+`<id>-policy` `MaaSAuthPolicy`; each create, update or delete is one commit to
+the branch. Models still use cluster mode.
+
+| Setting | Meaning |
+|---|---|
+| `AI_GRID_GIT_URL` | Repository URL, without credentials. Required. |
+| `AI_GRID_GIT_BRANCH` | Branch to commit to. Default `main`. It must have at least one commit. |
+| `AI_GRID_GIT_TOKEN_FILE` | File holding a GitHub personal access token with `contents: write` on that repository only, for example a mounted Secret. Sent as HTTPS basic auth; never logged. |
+
+In git mode:
+
+- `metadata.version` is the file's `ai-grid/version` annotation, which each
+  write increments. A stale version, or a write to the same file by another
+  backend since the read, answers `Aborted`.
+- `spec.organization.id` is required, and `spec.owner.groups` are bare group
+  names. The file holds `<organization id>/<group>`, the tenant-qualified form,
+  and reads return the bare names.
+- `status` is empty: the backend doesn't read status back from the clusters yet.
+- A model ref without a namespace gets the subscription's namespace
+  (`models-as-a-service` by default), where git mode writes the models'
+  `MaaSModelRef`s.
+- Keep a file that isn't `*.yaml`, such as a `README.md`, in
+  `catalog/subscriptions/`. Git drops an empty directory, so without it
+  deleting the last subscription removes the path, and Argo CD reports an error
+  instead of pruning. List reads only `*.yaml` files.
+
+To try it locally, point `AI_GRID_GIT_URL` at a bare repository on disk and run
+`AI_GRID_WRITE_MODE=git AI_GRID_GIT_URL=/path/to/repo.git make dev-fake`.
+
 The service runs in-cluster using its Kubernetes ServiceAccount. Its RBAC role
 allows `get`, `list`, `watch`, `create`, `update`, `patch`, and `delete` on
 `ManagedCluster` resources.
