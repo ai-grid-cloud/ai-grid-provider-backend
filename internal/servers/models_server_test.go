@@ -144,6 +144,53 @@ func TestModelsCreateWithPlacement(t *testing.T) {
 	}
 }
 
+func TestPlacementFromModelSelectsInferenceRoles(t *testing.T) {
+	t.Parallel()
+	obj := sampleModel("roles")
+	obj.Spec.Placement = &aigridv1.ModelPlacement{
+		LabelSelector: &aigridv1.ModelLabelSelector{
+			MatchLabels: map[string]string{"region": "eu"},
+			MatchExpressions: []*aigridv1.ModelLabelSelectorRequirement{
+				{Key: "location", Operator: "In", Values: []string{"site-paris"}},
+			},
+		},
+	}
+	p := placementFromModel(obj, "ai-grid-internal-models")
+	preds, _, _ := unstructured.NestedSlice(p.Object, "spec", "predicates")
+	if len(preds) != 1 {
+		t.Fatalf("predicates = %d, want 1", len(preds))
+	}
+	ls, _, _ := unstructured.NestedMap(preds[0].(map[string]interface{}), "requiredClusterSelector", "labelSelector")
+	labels, _, _ := unstructured.NestedStringMap(ls, "matchLabels")
+	if labels["ai-grid/enabled"] != "true" {
+		t.Errorf("ai-grid/enabled = %q, want true", labels["ai-grid/enabled"])
+	}
+	if _, ok := labels["ai-grid/provisioned"]; ok {
+		t.Error("selector must not require ai-grid/provisioned")
+	}
+	if labels["region"] != "eu" {
+		t.Errorf("caller matchLabel region = %q, want eu", labels["region"])
+	}
+	exprs, _ := ls["matchExpressions"].([]interface{})
+	var role, location bool
+	for _, e := range exprs {
+		m := e.(map[string]interface{})
+		switch m["key"] {
+		case "ai-grid/role":
+			vals, _ := m["values"].([]interface{})
+			role = m["operator"] == "In" && len(vals) == 2 && vals[0] == "inference" && vals[1] == "combined"
+		case "location":
+			location = true
+		}
+	}
+	if !role {
+		t.Errorf("missing ai-grid/role In [inference combined] in %v", exprs)
+	}
+	if !location {
+		t.Errorf("caller expression location dropped in %v", exprs)
+	}
+}
+
 func TestModelsCreateMWRSDisabled(t *testing.T) {
 	t.Parallel()
 	client := newModelsClient()

@@ -65,6 +65,11 @@ work.open-cluster-management.io/v1alpha1/manifestworkreplicasets
 maas.opendatahub.io/v1alpha1/maasmodelrefs
 ```
 
+The Placement selects clusters labelled `ai-grid/enabled=true` whose
+`ai-grid/role` is `inference` or `combined`, plus any selector the caller adds.
+ACM only evaluates a Placement when its namespace has a ManagedClusterSetBinding,
+so the environment must provide one in the models namespace.
+
 Create is deploy: it applies those objects to the hub. Without `spec.placement`
 the workload stays hub-only; with placement, Create fails with
 `FailedPrecondition` when ManifestWorkReplicaSet is unavailable on the hub.

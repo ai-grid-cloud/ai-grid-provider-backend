@@ -659,10 +659,14 @@ func placementFromModel(object *aigridv1.Model, namespace string) *unstructured.
 	}
 
 	matchLabels := map[string]string{
-		"ai-grid/enabled":     "true",
-		"ai-grid/provisioned": "true",
+		"ai-grid/enabled": "true",
 	}
-	var exprs []interface{}
+	// Only clusters that serve models: ingress-only spokes are excluded.
+	exprs := []interface{}{map[string]interface{}{
+		"key":      "ai-grid/role",
+		"operator": "In",
+		"values":   []interface{}{"inference", "combined"},
+	}}
 	if placement != nil && placement.GetLabelSelector() != nil {
 		sel := placement.GetLabelSelector()
 		for k, v := range sel.GetMatchLabels() {
