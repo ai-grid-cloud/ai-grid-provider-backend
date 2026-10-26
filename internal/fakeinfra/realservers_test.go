@@ -567,7 +567,8 @@ func TestRealSubscriptionsServerOnFakeHub(t *testing.T) {
 					Name: "tiny-llm", Namespace: "llm",
 					TokenRateLimits: []*aigridv1.TokenRateLimit{{Limit: 50, Window: "1m"}},
 				}},
-				Priority: 7,
+				Priority:     7,
+				Organization: &aigridv1.SubscriptionOrganization{Id: "org-1"},
 			},
 		},
 	})
@@ -597,7 +598,7 @@ func TestRealSubscriptionsServerOnFakeHub(t *testing.T) {
 	}
 	foundSynced := false
 	for _, pol := range after.GetAuthPolicies() {
-		if pol.GetId() == "team-smoke-policy" && slices.Contains(pol.GetSubjectGroups(), "smoke-admins") {
+		if pol.GetId() == "team-smoke-policy" && slices.Contains(pol.GetSubjectGroups(), "org-1/smoke-admins") {
 			foundSynced = true
 		}
 	}

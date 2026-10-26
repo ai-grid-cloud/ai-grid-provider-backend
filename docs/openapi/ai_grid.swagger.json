@@ -1858,7 +1858,7 @@
           "items": {
             "type": "string"
           },
-          "description": "IdP / Kubernetes group names."
+          "description": "IdP group names. Create and Update store each as\n\"\u003corganization.id\u003e/\u003cgroup\u003e\", the form tenant tokens carry: a bare name is\nprefixed, a name already carrying this organization's prefix is kept, and\nempty names or another organization's prefix are rejected. Duplicates are\nremoved."
         },
         "users": {
           "type": "array",
@@ -1892,7 +1892,7 @@
         },
         "organization": {
           "$ref": "#/definitions/v1SubscriptionOrganization",
-          "description": "Stable organization association. May be set once; then immutable."
+          "description": "Organization that owns the subscription. Required on Create and Update;\nimmutable once set."
         },
         "token_metadata": {
           "$ref": "#/definitions/v1TokenMetadata",

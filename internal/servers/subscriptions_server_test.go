@@ -64,7 +64,7 @@ func TestSubscriptionsCRUDAndAuthPolicyPairing(t *testing.T) {
 		t.Fatalf("policy labels = %v", policy.GetLabels())
 	}
 	subjects, _, _ := unstructured.NestedSlice(policy.Object, "spec", "subjects", "groups")
-	if len(subjects) != 1 || subjects[0].(map[string]interface{})["name"] != "team-a" {
+	if len(subjects) != 1 || subjects[0].(map[string]interface{})["name"] != "org-1/team-a" {
 		t.Fatalf("policy subjects.groups = %v", subjects)
 	}
 
@@ -113,7 +113,7 @@ func TestSubscriptionsCRUDAndAuthPolicyPairing(t *testing.T) {
 		t.Fatalf("get policy after update: %v", err)
 	}
 	subjects, _, _ = unstructured.NestedSlice(policy.Object, "spec", "subjects", "groups")
-	if len(subjects) != 1 || subjects[0].(map[string]interface{})["name"] != "team-a-admins" {
+	if len(subjects) != 1 || subjects[0].(map[string]interface{})["name"] != "org-1/team-a-admins" {
 		t.Fatalf("synced policy groups = %v", subjects)
 	}
 
@@ -275,6 +275,115 @@ func TestSubscriptionsOrganizationImmutable(t *testing.T) {
 	assertConnectCode(t, err, connect.CodeInvalidArgument)
 }
 
+func TestSubscriptionsCreateQualifiesGroups(t *testing.T) {
+	t.Parallel()
+
+	client := newSubscriptionClient()
+	srv := mustSubscriptionsServer(t, client)
+	ctx := context.Background()
+
+	obj := sampleSubscription("qualify")
+	obj.Spec.Organization = &aigridv1.SubscriptionOrganization{Id: "org-1"}
+	obj.Spec.Owner = &aigridv1.SubscriptionOwner{Groups: []string{"engineers"}, Users: []string{"alice"}}
+	if _, err := srv.Create(ctx, &aigridv1.SubscriptionsCreateRequest{Object: obj}); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	assertStoredSubscriptionGroups(t, client, "qualify", []string{"org-1/engineers"}, []string{"alice"})
+
+	updated := sampleSubscription("qualify")
+	updated.Spec.Organization = &aigridv1.SubscriptionOrganization{Id: "org-1"}
+	updated.Spec.Owner = &aigridv1.SubscriptionOwner{Groups: []string{"admins"}, Users: []string{"alice"}}
+	if _, err := srv.Update(ctx, &aigridv1.SubscriptionsUpdateRequest{Object: updated}); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+	assertStoredSubscriptionGroups(t, client, "qualify", []string{"org-1/admins"}, []string{"alice"})
+}
+
+func TestSubscriptionsCreateDoesNotDoublePrefix(t *testing.T) {
+	t.Parallel()
+
+	client := newSubscriptionClient()
+	srv := mustSubscriptionsServer(t, client)
+
+	obj := sampleSubscription("noprefix")
+	obj.Spec.Organization = &aigridv1.SubscriptionOrganization{Id: "org-1"}
+	obj.Spec.Owner = &aigridv1.SubscriptionOwner{Groups: []string{"org-1/engineers", "engineers", "ops"}}
+	if _, err := srv.Create(context.Background(), &aigridv1.SubscriptionsCreateRequest{Object: obj}); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	assertStoredSubscriptionGroups(t, client, "noprefix", []string{"org-1/engineers", "org-1/ops"}, nil)
+}
+
+func TestSubscriptionsCreateRejectsForeignOrgPrefix(t *testing.T) {
+	t.Parallel()
+
+	srv := mustSubscriptionsServer(t, newSubscriptionClient())
+	ctx := context.Background()
+
+	foreign := sampleSubscription("foreign")
+	foreign.Spec.Organization = &aigridv1.SubscriptionOrganization{Id: "org-1"}
+	foreign.Spec.Owner = &aigridv1.SubscriptionOwner{Groups: []string{"org-2/engineers"}}
+	_, err := srv.Create(ctx, &aigridv1.SubscriptionsCreateRequest{Object: foreign})
+	assertConnectCode(t, err, connect.CodeInvalidArgument)
+
+	empty := sampleSubscription("empty-group")
+	empty.Spec.Organization = &aigridv1.SubscriptionOrganization{Id: "org-1"}
+	empty.Spec.Owner = &aigridv1.SubscriptionOwner{Groups: []string{"engineers", " "}}
+	_, err = srv.Create(ctx, &aigridv1.SubscriptionsCreateRequest{Object: empty})
+	assertConnectCode(t, err, connect.CodeInvalidArgument)
+}
+
+func TestSubscriptionsCreateRequiresOrganization(t *testing.T) {
+	t.Parallel()
+
+	client := newSubscriptionClient()
+	srv := mustSubscriptionsServer(t, client)
+
+	obj := sampleSubscription("no-org")
+	obj.Spec.Organization = nil
+	_, err := srv.Create(context.Background(), &aigridv1.SubscriptionsCreateRequest{Object: obj})
+	assertConnectCode(t, err, connect.CodeInvalidArgument)
+	if _, getErr := client.Resource(testSubscriptionsGVR).Namespace("models-as-a-service").Get(context.Background(), "no-org", metav1.GetOptions{}); !apierrors.IsNotFound(getErr) {
+		t.Fatalf("subscription without organization was stored: %v", getErr)
+	}
+}
+
+// assertStoredSubscriptionGroups checks the owner groups and users on the
+// MaaSSubscription and the subjects on its managed <id>-policy MaaSAuthPolicy.
+func assertStoredSubscriptionGroups(t *testing.T, client *fake.FakeDynamicClient, id string, wantGroups, wantUsers []string) {
+	t.Helper()
+	ctx := context.Background()
+	sub, err := client.Resource(testSubscriptionsGVR).Namespace("models-as-a-service").Get(ctx, id, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get subscription %q: %v", id, err)
+	}
+	policy, err := client.Resource(testAuthPoliciesGVR).Namespace("models-as-a-service").Get(ctx, id+"-policy", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get policy %q: %v", id+"-policy", err)
+	}
+	for _, tc := range []struct {
+		what string
+		obj  *unstructured.Unstructured
+		path []string
+	}{
+		{"subscription spec.owner", sub, []string{"spec", "owner"}},
+		{"policy spec.subjects", policy, []string{"spec", "subjects"}},
+	} {
+		raw, _, _ := unstructured.NestedSlice(tc.obj.Object, append(tc.path, "groups")...)
+		var groups []string
+		for _, g := range raw {
+			groups = append(groups, fmt.Sprint(g.(map[string]interface{})["name"]))
+		}
+		if fmt.Sprint(groups) != fmt.Sprint(wantGroups) {
+			t.Fatalf("%s.groups = %v, want %v", tc.what, groups, wantGroups)
+		}
+		users, _, _ := unstructured.NestedStringSlice(tc.obj.Object, append(tc.path, "users")...)
+		if fmt.Sprint(users) != fmt.Sprint(wantUsers) {
+			t.Fatalf("%s.users = %v, want %v", tc.what, users, wantUsers)
+		}
+	}
+}
+
 func TestSubscriptionsUnlimitedCreate(t *testing.T) {
 	t.Parallel()
 
@@ -410,7 +519,8 @@ func sampleSubscription(id string) *aigridv1.Subscription {
 					},
 				},
 			},
-			Priority: 10,
+			Priority:     10,
+			Organization: &aigridv1.SubscriptionOrganization{Id: "org-1"},
 		},
 	}
 }

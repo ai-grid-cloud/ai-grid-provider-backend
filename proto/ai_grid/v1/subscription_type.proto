@@ -42,7 +42,8 @@ message SubscriptionSpec {
   // Relative priority among subscriptions (higher wins when policies conflict).
   int32 priority = 3;
 
-  // Stable organization association. May be set once; then immutable.
+  // Organization that owns the subscription. Required on Create and Update;
+  // immutable once set.
   SubscriptionOrganization organization = 4;
 
   // Metadata for token attribution and metering.
@@ -67,7 +68,11 @@ message SubscriptionOrganization {
 
 // SubscriptionOwner names the groups and users that own the entitlement.
 message SubscriptionOwner {
-  // IdP / Kubernetes group names.
+  // IdP group names. Create and Update store each as
+  // "<organization.id>/<group>", the form tenant tokens carry: a bare name is
+  // prefixed, a name already carrying this organization's prefix is kept, and
+  // empty names or another organization's prefix are rejected. Duplicates are
+  // removed.
   repeated string groups = 1;
 
   // User names (for example service accounts).

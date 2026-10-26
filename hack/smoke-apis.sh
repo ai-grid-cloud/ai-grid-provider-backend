@@ -323,13 +323,13 @@ else
 
     before_failed=$failed
     call_grpc 'Subscriptions/Create' \
-      "{\"object\":{\"id\":\"${smoke_sub_grpc}\",\"metadata\":{\"name\":\"${smoke_sub_grpc}\"},\"spec\":{\"owner\":{\"groups\":[\"smoke\"]},\"model_refs\":[{\"name\":\"tiny-llm\",\"namespace\":\"llm\",\"token_rate_limits\":[{\"limit\":50,\"window\":\"1m\"}]}],\"priority\":5}}}" \
+      "{\"object\":{\"id\":\"${smoke_sub_grpc}\",\"metadata\":{\"name\":\"${smoke_sub_grpc}\"},\"spec\":{\"owner\":{\"groups\":[\"smoke\"]},\"model_refs\":[{\"name\":\"tiny-llm\",\"namespace\":\"llm\",\"token_rate_limits\":[{\"limit\":50,\"window\":\"1m\"}]}],\"priority\":5,\"organization\":{\"id\":\"smoke-org\"}}}}" \
       'ai_grid.v1.Subscriptions/Create'
     if (( failed == before_failed )); then
       cleanup_subscription_ids+=("$smoke_sub_grpc")
       call_grpc 'Subscriptions/Get' "{\"id\":\"${smoke_sub_grpc}\"}" 'ai_grid.v1.Subscriptions/Get'
       call_grpc 'Subscriptions/Update (update_mask=spec)' \
-        "{\"object\":{\"id\":\"${smoke_sub_grpc}\",\"metadata\":{\"name\":\"${smoke_sub_grpc}\"},\"spec\":{\"owner\":{\"groups\":[\"smoke-admins\"]},\"model_refs\":[{\"name\":\"tiny-llm\",\"namespace\":\"llm\",\"token_rate_limits\":[{\"limit\":50,\"window\":\"1m\"}]}],\"priority\":9}},\"update_mask\":{\"paths\":[\"spec\"]}}" \
+        "{\"object\":{\"id\":\"${smoke_sub_grpc}\",\"metadata\":{\"name\":\"${smoke_sub_grpc}\"},\"spec\":{\"owner\":{\"groups\":[\"smoke-admins\"]},\"model_refs\":[{\"name\":\"tiny-llm\",\"namespace\":\"llm\",\"token_rate_limits\":[{\"limit\":50,\"window\":\"1m\"}]}],\"priority\":9,\"organization\":{\"id\":\"smoke-org\"}}},\"update_mask\":{\"paths\":[\"spec\"]}}" \
         'ai_grid.v1.Subscriptions/Update'
       call_grpc 'Subscriptions/Delete' "{\"id\":\"${smoke_sub_grpc}\"}" 'ai_grid.v1.Subscriptions/Delete'
     fi
@@ -340,12 +340,12 @@ else
 
     before_failed=$failed
     call_http 'POST /api/v1/subscriptions' POST '/api/v1/subscriptions' \
-      "{\"id\":\"${smoke_sub_rest}\",\"metadata\":{\"name\":\"${smoke_sub_rest}\"},\"spec\":{\"owner\":{\"groups\":[\"smoke\"]},\"model_refs\":[{\"name\":\"tiny-llm\",\"namespace\":\"llm\",\"token_rate_limits\":[{\"limit\":50,\"window\":\"1m\"}]}],\"priority\":5}}"
+      "{\"id\":\"${smoke_sub_rest}\",\"metadata\":{\"name\":\"${smoke_sub_rest}\"},\"spec\":{\"owner\":{\"groups\":[\"smoke\"]},\"model_refs\":[{\"name\":\"tiny-llm\",\"namespace\":\"llm\",\"token_rate_limits\":[{\"limit\":50,\"window\":\"1m\"}]}],\"priority\":5,\"organization\":{\"id\":\"smoke-org\"}}}"
     if (( failed == before_failed )); then
       cleanup_subscription_ids+=("$smoke_sub_rest")
       call_http "GET /api/v1/subscriptions/${smoke_sub_rest}" GET "/api/v1/subscriptions/${smoke_sub_rest}"
       call_http "PATCH /api/v1/subscriptions/${smoke_sub_rest}" PATCH "/api/v1/subscriptions/${smoke_sub_rest}" \
-        "{\"id\":\"${smoke_sub_rest}\",\"metadata\":{\"name\":\"${smoke_sub_rest}\"},\"spec\":{\"owner\":{\"groups\":[\"smoke-admins\"]},\"model_refs\":[{\"name\":\"tiny-llm\",\"namespace\":\"llm\",\"token_rate_limits\":[{\"limit\":50,\"window\":\"1m\"}]}],\"priority\":9}}"
+        "{\"id\":\"${smoke_sub_rest}\",\"metadata\":{\"name\":\"${smoke_sub_rest}\"},\"spec\":{\"owner\":{\"groups\":[\"smoke-admins\"]},\"model_refs\":[{\"name\":\"tiny-llm\",\"namespace\":\"llm\",\"token_rate_limits\":[{\"limit\":50,\"window\":\"1m\"}]}],\"priority\":9,\"organization\":{\"id\":\"smoke-org\"}}}"
       call_http "DELETE /api/v1/subscriptions/${smoke_sub_rest}" DELETE "/api/v1/subscriptions/${smoke_sub_rest}"
     fi
   fi

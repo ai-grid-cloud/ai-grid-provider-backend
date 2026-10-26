@@ -110,7 +110,8 @@ type SubscriptionSpec struct {
 	ModelRefs []*SubscriptionModelRef `protobuf:"bytes,2,rep,name=model_refs,json=modelRefs,proto3" json:"model_refs,omitempty"`
 	// Relative priority among subscriptions (higher wins when policies conflict).
 	Priority int32 `protobuf:"varint,3,opt,name=priority,proto3" json:"priority,omitempty"`
-	// Stable organization association. May be set once; then immutable.
+	// Organization that owns the subscription. Required on Create and Update;
+	// immutable once set.
 	Organization *SubscriptionOrganization `protobuf:"bytes,4,opt,name=organization,proto3" json:"organization,omitempty"`
 	// Metadata for token attribution and metering.
 	TokenMetadata *TokenMetadata `protobuf:"bytes,5,opt,name=token_metadata,json=tokenMetadata,proto3" json:"token_metadata,omitempty"`
@@ -251,7 +252,11 @@ func (x *SubscriptionOrganization) GetId() string {
 // SubscriptionOwner names the groups and users that own the entitlement.
 type SubscriptionOwner struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// IdP / Kubernetes group names.
+	// IdP group names. Create and Update store each as
+	// "<organization.id>/<group>", the form tenant tokens carry: a bare name is
+	// prefixed, a name already carrying this organization's prefix is kept, and
+	// empty names or another organization's prefix are rejected. Duplicates are
+	// removed.
 	Groups []string `protobuf:"bytes,1,rep,name=groups,proto3" json:"groups,omitempty"`
 	// User names (for example service accounts).
 	Users         []string `protobuf:"bytes,2,rep,name=users,proto3" json:"users,omitempty"`

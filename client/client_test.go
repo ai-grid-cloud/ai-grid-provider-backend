@@ -322,7 +322,8 @@ func TestClientSubscriptionsCRUD(t *testing.T) {
 			ModelRefs: []*aigridv1.SubscriptionModelRef{
 				{Name: "sim-model", TokenRateLimits: []*aigridv1.TokenRateLimit{{Limit: 100, Window: "1m"}}},
 			},
-			Priority: 10,
+			Priority:     10,
+			Organization: &aigridv1.SubscriptionOrganization{Id: "org-1"},
 		},
 	})
 	if err != nil {

@@ -176,6 +176,9 @@ func (s *SubscriptionsServer) Create(ctx context.Context, req *aigridv1.Subscrip
 	if err := validateSubscriptionSpec(object.GetSpec()); err != nil {
 		return nil, err
 	}
+	if err := qualifyOwnerGroups(object.GetSpec()); err != nil {
+		return nil, err
+	}
 
 	policyName := authPolicyNameForSubscription(id)
 	if existing, err := s.client.Resource(maasAuthPoliciesResource).Namespace(s.namespace).Get(ctx, policyName, metav1.GetOptions{}); err == nil {
@@ -243,6 +246,9 @@ func (s *SubscriptionsServer) Update(ctx context.Context, req *aigridv1.Subscrip
 		}
 		currentSub := subscriptionFromUnstructured(*current)
 		if err := validateOrganizationImmutable(currentSub.GetSpec(), object.GetSpec()); err != nil {
+			return nil, err
+		}
+		if err := qualifyOwnerGroups(object.GetSpec()); err != nil {
 			return nil, err
 		}
 	}
@@ -461,8 +467,8 @@ func validateSubscriptionSpec(spec *aigridv1.SubscriptionSpec) error {
 	if owner == nil || (len(owner.GetGroups()) == 0 && len(owner.GetUsers()) == 0) {
 		return connect.NewError(connect.CodeInvalidArgument, "spec.owner must include at least one group or user")
 	}
-	if org := spec.GetOrganization(); org != nil && strings.TrimSpace(org.GetId()) == "" {
-		return connect.NewError(connect.CodeInvalidArgument, "spec.organization.id must be non-empty when organization is set")
+	if strings.TrimSpace(spec.GetOrganization().GetId()) == "" {
+		return connect.NewError(connect.CodeInvalidArgument, "spec.organization.id is required")
 	}
 	refs := spec.GetModelRefs()
 	if len(refs) == 0 {
@@ -499,6 +505,40 @@ func validateSubscriptionSpec(spec *aigridv1.SubscriptionSpec) error {
 				return connect.Errorf(connect.CodeInvalidArgument, "spec.model_refs[%d].token_rate_limits[%d].window %q is invalid", i, j, lim.GetWindow())
 			}
 		}
+	}
+	return nil
+}
+
+// qualifyOwnerGroups rewrites spec.owner.groups in place to the
+// "<organization-id>/<group>" form that tenant tokens carry in their groups
+// claim, so the MaaSSubscription and its managed MaaSAuthPolicy (both built
+// from the spec) match only this organization's groups. A group that already
+// carries this organization's prefix is kept; any other prefix, and an empty
+// group, is rejected. Duplicates are removed after qualifying. Users are not
+// changed. Call it after validateSubscriptionSpec.
+func qualifyOwnerGroups(spec *aigridv1.SubscriptionSpec) error {
+	orgID := spec.GetOrganization().GetId()
+	prefix := orgID + "/"
+	owner := spec.GetOwner()
+	groups := make([]string, 0, len(owner.GetGroups()))
+	seen := make(map[string]struct{}, len(owner.GetGroups()))
+	for i, group := range owner.GetGroups() {
+		name := strings.TrimPrefix(group, prefix)
+		if strings.TrimSpace(name) == "" {
+			return connect.Errorf(connect.CodeInvalidArgument, "spec.owner.groups[%d] must be non-empty", i)
+		}
+		if strings.Contains(name, "/") && !strings.HasPrefix(group, prefix) {
+			return connect.Errorf(connect.CodeInvalidArgument, "spec.owner.groups[%d] %q belongs to another organization; use a bare group name or %q", i, group, prefix+"<group>")
+		}
+		qualified := prefix + name
+		if _, dup := seen[qualified]; dup {
+			continue
+		}
+		seen[qualified] = struct{}{}
+		groups = append(groups, qualified)
+	}
+	if owner != nil {
+		owner.Groups = groups
 	}
 	return nil
 }
