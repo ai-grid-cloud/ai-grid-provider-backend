@@ -200,6 +200,61 @@ func TestSubscriptionsDeleteLeavesUnmanagedPolicy(t *testing.T) {
 	}
 }
 
+func TestSubscriptionsDeleteFailsWhenPolicyDeleteFails(t *testing.T) {
+	t.Parallel()
+
+	client := newSubscriptionClient()
+	srv := mustSubscriptionsServer(t, client)
+	ctx := context.Background()
+	if _, err := srv.Create(ctx, &aigridv1.SubscriptionsCreateRequest{Object: sampleSubscription("keep")}); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	client.PrependReactor("delete", "maasauthpolicies", func(clienttesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewInternalError(fmt.Errorf("policy delete boom"))
+	})
+
+	_, err := srv.Delete(ctx, &aigridv1.SubscriptionsDeleteRequest{Id: "keep"})
+	if err == nil {
+		t.Fatal("Delete() expected error when the managed policy delete fails")
+	}
+	if _, getErr := client.Resource(testSubscriptionsGVR).Namespace("models-as-a-service").Get(ctx, "keep", metav1.GetOptions{}); getErr != nil {
+		t.Fatalf("subscription should remain so Delete can be retried: %v", getErr)
+	}
+}
+
+func TestSubscriptionsCreateSetsPolicyOwnerReference(t *testing.T) {
+	t.Parallel()
+
+	client := newSubscriptionClient()
+	// The fake tracker assigns no UID; the real API server always does.
+	client.PrependReactor("create", "maassubscriptions", func(a clienttesting.Action) (bool, runtime.Object, error) {
+		obj := a.(clienttesting.CreateAction).GetObject().(*unstructured.Unstructured).DeepCopy()
+		obj.SetUID("sub-uid-1")
+		return true, obj, nil
+	})
+	srv := mustSubscriptionsServer(t, client)
+	ctx := context.Background()
+
+	if _, err := srv.Create(ctx, &aigridv1.SubscriptionsCreateRequest{Object: sampleSubscription("owned")}); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	policy, err := client.Resource(testAuthPoliciesGVR).Namespace("models-as-a-service").Get(ctx, "owned-policy", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get policy: %v", err)
+	}
+	refs := policy.GetOwnerReferences()
+	if len(refs) != 1 {
+		t.Fatalf("ownerReferences = %v, want exactly one", refs)
+	}
+	ref := refs[0]
+	if ref.APIVersion != "maas.opendatahub.io/v1alpha1" || ref.Kind != "MaaSSubscription" || ref.Name != "owned" || ref.UID != "sub-uid-1" {
+		t.Fatalf("ownerReference = %+v", ref)
+	}
+	if ref.Controller != nil || ref.BlockOwnerDeletion == nil || *ref.BlockOwnerDeletion {
+		t.Fatalf("controller must be unset and blockOwnerDeletion false, got %+v", ref)
+	}
+}
+
 func TestSubscriptionsCreateCompensatesWhenPolicyFails(t *testing.T) {
 	t.Parallel()
 

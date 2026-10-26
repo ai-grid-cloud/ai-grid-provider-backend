@@ -213,6 +213,16 @@ func (s *SubscriptionsServer) Create(ctx context.Context, req *aigridv1.Subscrip
 	}
 
 	policy := authPolicyFromSubscription(object, s.namespace)
+	// Owned by the subscription, so Kubernetes garbage-collects the policy if the
+	// subscription is deleted some other way.
+	blockOwnerDeletion := false
+	policy.SetOwnerReferences([]metav1.OwnerReference{{
+		APIVersion:         created.GetAPIVersion(),
+		Kind:               created.GetKind(),
+		Name:               created.GetName(),
+		UID:                created.GetUID(),
+		BlockOwnerDeletion: &blockOwnerDeletion,
+	}})
 	createdPolicy, err := s.client.Resource(maasAuthPoliciesResource).Namespace(s.namespace).Create(ctx, policy, metav1.CreateOptions{})
 	if err != nil {
 		if delErr := s.client.Resource(maasSubscriptionsResource).Namespace(s.namespace).Delete(ctx, id, metav1.DeleteOptions{}); delErr != nil && !apierrors.IsNotFound(delErr) {
@@ -331,24 +341,23 @@ func (s *SubscriptionsServer) Delete(ctx context.Context, req *aigridv1.Subscrip
 	if err := validateSubscriptionID(id); err != nil {
 		return nil, err
 	}
-	err := s.client.Resource(maasSubscriptionsResource).Namespace(s.namespace).Delete(ctx, id, metav1.DeleteOptions{})
-	if err != nil {
-		return nil, mapSubscriptionAPIError("delete", id, err)
+	// Remove the managed policy first: if it can't be removed, the subscription stays
+	// so the caller can retry, instead of leaving a policy that keeps granting access.
+	policyName := authPolicyNameForSubscription(id)
+	existing, err := s.client.Resource(maasAuthPoliciesResource).Namespace(s.namespace).Get(ctx, policyName, metav1.GetOptions{})
+	switch {
+	case err == nil:
+		if isManagedAuthPolicy(existing) {
+			if delErr := s.client.Resource(maasAuthPoliciesResource).Namespace(s.namespace).Delete(ctx, policyName, metav1.DeleteOptions{}); delErr != nil && !apierrors.IsNotFound(delErr) {
+				return nil, mapSubscriptionAPIError("delete auth policy", id, delErr)
+			}
+		}
+	case !apierrors.IsNotFound(err):
+		return nil, mapSubscriptionAPIError("get auth policy", id, err)
 	}
 
-	policyName := authPolicyNameForSubscription(id)
-	existing, getErr := s.client.Resource(maasAuthPoliciesResource).Namespace(s.namespace).Get(ctx, policyName, metav1.GetOptions{})
-	if getErr != nil {
-		if !apierrors.IsNotFound(getErr) {
-			s.logger.Warn("get auth policy after subscription delete", "policy", policyName, "error", getErr)
-		}
-		return &aigridv1.SubscriptionsDeleteResponse{}, nil
-	}
-	if !isManagedAuthPolicy(existing) {
-		return &aigridv1.SubscriptionsDeleteResponse{}, nil
-	}
-	if delErr := s.client.Resource(maasAuthPoliciesResource).Namespace(s.namespace).Delete(ctx, policyName, metav1.DeleteOptions{}); delErr != nil && !apierrors.IsNotFound(delErr) {
-		s.logger.Warn("delete managed auth policy", "policy", policyName, "error", delErr)
+	if err := s.client.Resource(maasSubscriptionsResource).Namespace(s.namespace).Delete(ctx, id, metav1.DeleteOptions{}); err != nil {
+		return nil, mapSubscriptionAPIError("delete", id, err)
 	}
 	return &aigridv1.SubscriptionsDeleteResponse{}, nil
 }
