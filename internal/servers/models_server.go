@@ -118,7 +118,7 @@ func (s *ModelsServer) List(ctx context.Context, req *aigridv1.ModelsListRequest
 	items := make([]*aigridv1.Model, 0, len(list.Items))
 	for i := range list.Items {
 		m := modelFromLLMInferenceService(list.Items[i])
-		s.enrichPlacement(ctx, m)
+		_ = s.enrichPlacement(ctx, m)
 		items = append(items, m)
 	}
 
@@ -163,7 +163,7 @@ func (s *ModelsServer) Get(ctx context.Context, req *aigridv1.ModelsGetRequest) 
 		return nil, mapModelAPIError("get", id, err)
 	}
 	m := modelFromLLMInferenceService(*obj)
-	s.enrichPlacement(ctx, m)
+	_ = s.enrichPlacement(ctx, m)
 	return &aigridv1.ModelsGetResponse{Object: m}, nil
 }
 
@@ -223,7 +223,7 @@ func (s *ModelsServer) Create(ctx context.Context, req *aigridv1.ModelsCreateReq
 	}
 
 	m := modelFromLLMInferenceService(*created)
-	s.enrichPlacement(ctx, m)
+	_ = s.enrichPlacement(ctx, m)
 	return &aigridv1.ModelsCreateResponse{Object: m}, nil
 }
 
@@ -260,7 +260,9 @@ func (s *ModelsServer) Update(ctx context.Context, req *aigridv1.ModelsUpdateReq
 	}
 
 	currentModel := modelFromLLMInferenceService(*current)
-	s.enrichPlacement(ctx, currentModel)
+	if err := s.enrichPlacement(ctx, currentModel); err != nil {
+		return nil, mapModelAPIError("get Placement", id, err)
+	}
 	merged := mergeModelUpdate(currentModel, object, paths)
 	if err := validateModelSpec(merged.GetSpec()); err != nil {
 		return nil, err
@@ -329,7 +331,8 @@ func (s *ModelsServer) Update(ctx context.Context, req *aigridv1.ModelsUpdateReq
 		updated = current
 	}
 
-	if paths.placement || paths.rollout || paths.llmSpec {
+	// An LLM spec change only needs to reach an existing Placement/MWRS; it must never create or delete one.
+	if paths.placement || paths.rollout || (paths.llmSpec && merged.GetSpec().GetPlacement() != nil) {
 		if err := s.syncPlacementSideEffects(ctx, merged, updated); err != nil {
 			return nil, err
 		}
@@ -341,7 +344,7 @@ func (s *ModelsServer) Update(ctx context.Context, req *aigridv1.ModelsUpdateReq
 	}
 
 	m := modelFromLLMInferenceService(*updated)
-	s.enrichPlacement(ctx, m)
+	_ = s.enrichPlacement(ctx, m)
 	return &aigridv1.ModelsUpdateResponse{Object: m}, nil
 }
 
@@ -381,15 +384,20 @@ func (s *ModelsServer) Delete(ctx context.Context, req *aigridv1.ModelsDeleteReq
 	return &aigridv1.ModelsDeleteResponse{}, nil
 }
 
-func (s *ModelsServer) enrichPlacement(ctx context.Context, m *aigridv1.Model) {
+// enrichPlacement fills in placement status. A missing Placement means the model is unplaced and
+// returns nil; any other Placement read error is returned so callers cannot mistake it for "unplaced".
+func (s *ModelsServer) enrichPlacement(ctx context.Context, m *aigridv1.Model) error {
 	if m == nil {
-		return
+		return nil
 	}
 	id := modelID(m)
 	pname := placementNameForModel(id)
 	placement, err := s.client.Resource(placementsResource).Namespace(s.namespace).Get(ctx, pname, metav1.GetOptions{})
 	if err != nil {
-		return
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return err
 	}
 	var decision *unstructured.Unstructured
 	decisions, err := s.client.Resource(placementDecisionsResource).Namespace(s.namespace).List(ctx, metav1.ListOptions{
@@ -404,6 +412,7 @@ func (s *ModelsServer) enrichPlacement(ctx context.Context, m *aigridv1.Model) {
 	if err == nil {
 		enrichModelFromMWRS(m, mwrs)
 	}
+	return nil
 }
 
 func (s *ModelsServer) compensateCreate(ctx context.Context, id string) {

@@ -2,17 +2,21 @@ package servers
 
 import (
 	"context"
+	"errors"
+	"sync/atomic"
 	"testing"
 
 	connect "connectrpc.com/connect/v2"
 	aigridv1 "github.com/osac-project/ai-grid-provider-backend/gen/ai_grid/v1"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 var (
@@ -241,6 +245,54 @@ func TestModelsCreateScalingOnly(t *testing.T) {
 	}
 	if created.GetObject().GetSpec().GetScaling().GetMaxReplicas() != 3 {
 		t.Fatalf("scaling.max = %d", created.GetObject().GetSpec().GetScaling().GetMaxReplicas())
+	}
+}
+
+func TestModelsUpdateKeepsPlacementWhenPlacementReadFails(t *testing.T) {
+	t.Parallel()
+	client := newModelsClient()
+	srv := mustModelsServer(t, client)
+	ctx := context.Background()
+
+	obj := sampleModel("flaky-read")
+	obj.Spec.Placement = &aigridv1.ModelPlacement{
+		LabelSelector: &aigridv1.ModelLabelSelector{
+			MatchExpressions: []*aigridv1.ModelLabelSelectorRequirement{
+				{Key: "location", Operator: "In", Values: []string{"site-paris"}},
+			},
+		},
+	}
+	created, err := srv.Create(ctx, &aigridv1.ModelsCreateRequest{Object: obj})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	var failReads atomic.Bool
+	failReads.Store(true)
+	client.PrependReactor("get", "placements", func(k8stesting.Action) (bool, runtime.Object, error) {
+		if failReads.Load() {
+			return true, nil, apierrors.NewInternalError(errors.New("etcd timeout"))
+		}
+		return false, nil, nil
+	})
+
+	upd := created.GetObject()
+	replicas := int32(2)
+	upd.Spec.Replicas = &replicas
+	_, err = srv.Update(ctx, &aigridv1.ModelsUpdateRequest{
+		Object:     upd,
+		UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"spec.replicas"}},
+	})
+	if err == nil {
+		t.Fatal("Update() succeeded although the Placement read failed")
+	}
+
+	failReads.Store(false)
+	if _, err := client.Resource(testPlacementGVR).Namespace("ai-grid-internal-models").Get(ctx, "model-flaky-read", metav1.GetOptions{}); err != nil {
+		t.Fatalf("Placement gone after failed read: %v", err)
+	}
+	if _, err := client.Resource(testMWRSGVR).Namespace("ai-grid-internal-models").Get(ctx, "model-flaky-read", metav1.GetOptions{}); err != nil {
+		t.Fatalf("ManifestWorkReplicaSet gone after failed read: %v", err)
 	}
 }
 
