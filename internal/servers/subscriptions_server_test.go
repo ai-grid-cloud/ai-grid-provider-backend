@@ -132,7 +132,7 @@ func TestSubscriptionsCRUDAndAuthPolicyPairing(t *testing.T) {
 	_, err = srv.Update(ctx, &aigridv1.SubscriptionsUpdateRequest{Object: stale, Lock: true})
 	assertConnectCode(t, err, connect.CodeAborted)
 
-	if _, err := srv.Delete(ctx, &aigridv1.SubscriptionsDeleteRequest{Id: "team-a"}); err != nil {
+	if _, err := srv.Delete(ctx, &aigridv1.SubscriptionsDeleteRequest{Id: "team-a", Version: 99}); err != nil {
 		t.Fatalf("Delete() error = %v", err)
 	}
 	if _, err := client.Resource(testSubscriptionsGVR).Namespace("models-as-a-service").Get(ctx, "team-a", metav1.GetOptions{}); !apierrors.IsNotFound(err) {
@@ -193,7 +193,7 @@ func TestSubscriptionsDeleteLeavesUnmanagedPolicy(t *testing.T) {
 	client := newSubscriptionClient(sub, policy)
 	srv := mustSubscriptionsServer(t, client)
 
-	if _, err := srv.Delete(context.Background(), &aigridv1.SubscriptionsDeleteRequest{Id: "legacy"}); err != nil {
+	if _, err := srv.Delete(context.Background(), &aigridv1.SubscriptionsDeleteRequest{Id: "legacy", Version: 1}); err != nil {
 		t.Fatalf("Delete() error = %v", err)
 	}
 	if _, err := client.Resource(testAuthPoliciesGVR).Namespace("models-as-a-service").Get(context.Background(), "legacy-policy", metav1.GetOptions{}); err != nil {
@@ -210,13 +210,22 @@ func TestSubscriptionsDeleteFailsWhenPolicyDeleteFails(t *testing.T) {
 	if _, err := srv.Create(ctx, &aigridv1.SubscriptionsCreateRequest{Object: sampleSubscription("keep")}); err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
+	// The fake assigns no resourceVersion; give the subscription one to delete at.
+	sub, err := client.Resource(testSubscriptionsGVR).Namespace("models-as-a-service").Get(ctx, "keep", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get subscription: %v", err)
+	}
+	sub.SetResourceVersion("3")
+	if _, err := client.Resource(testSubscriptionsGVR).Namespace("models-as-a-service").Update(ctx, sub, metav1.UpdateOptions{}); err != nil {
+		t.Fatalf("seed resourceVersion: %v", err)
+	}
 	client.PrependReactor("delete", "maasauthpolicies", func(clienttesting.Action) (bool, runtime.Object, error) {
 		return true, nil, apierrors.NewInternalError(fmt.Errorf("policy delete boom"))
 	})
 
-	_, err := srv.Delete(ctx, &aigridv1.SubscriptionsDeleteRequest{Id: "keep"})
-	if err == nil {
-		t.Fatal("Delete() expected error when the managed policy delete fails")
+	_, err = srv.Delete(ctx, &aigridv1.SubscriptionsDeleteRequest{Id: "keep", Version: 3})
+	if connect.CodeOf(err) != connect.CodeInternal {
+		t.Fatalf("Delete() = %v, want the policy delete's Internal error", err)
 	}
 	if _, getErr := client.Resource(testSubscriptionsGVR).Namespace("models-as-a-service").Get(ctx, "keep", metav1.GetOptions{}); getErr != nil {
 		t.Fatalf("subscription should remain so Delete can be retried: %v", getErr)
@@ -253,6 +262,27 @@ func TestSubscriptionsCreateSetsPolicyOwnerReference(t *testing.T) {
 	}
 	if ref.Controller != nil || ref.BlockOwnerDeletion == nil || *ref.BlockOwnerDeletion {
 		t.Fatalf("controller must be unset and blockOwnerDeletion false, got %+v", ref)
+	}
+}
+
+// Delete requires the version the caller read: zero is InvalidArgument and a
+// stale one is Aborted; neither deletes the subscription.
+func TestSubscriptionsDeleteStaleVersionAborted(t *testing.T) {
+	t.Parallel()
+
+	client := newSubscriptionClient(subscriptionUnstructured("team-a", "models-as-a-service"))
+	srv := mustSubscriptionsServer(t, client)
+	ctx := context.Background()
+
+	_, err := srv.Delete(ctx, &aigridv1.SubscriptionsDeleteRequest{Id: "team-a"})
+	assertConnectCode(t, err, connect.CodeInvalidArgument)
+	_, err = srv.Delete(ctx, &aigridv1.SubscriptionsDeleteRequest{Id: "team-a", Version: 7})
+	assertConnectCode(t, err, connect.CodeAborted)
+	if _, err := client.Resource(testSubscriptionsGVR).Namespace("models-as-a-service").Get(ctx, "team-a", metav1.GetOptions{}); err != nil {
+		t.Fatalf("a refused delete removed the subscription: %v", err)
+	}
+	if _, err := srv.Delete(ctx, &aigridv1.SubscriptionsDeleteRequest{Id: "team-a", Version: 1}); err != nil {
+		t.Fatalf("Delete() error = %v", err)
 	}
 }
 

@@ -493,7 +493,7 @@ func TestRealModelsServerOnFakeHub(t *testing.T) {
 		t.Fatalf("updated replicas = %v", updated.GetObject().GetSpec().Replicas)
 	}
 
-	if _, err := s.Delete(ctx, &aigridv1.ModelsDeleteRequest{Id: "smoke-opt"}); err != nil {
+	if _, err := s.Delete(ctx, &aigridv1.ModelsDeleteRequest{Id: "smoke-opt", Version: updated.GetObject().GetMetadata().GetVersion()}); err != nil {
 		t.Fatalf("Delete() error = %v", err)
 	}
 	if _, err := s.Get(ctx, &aigridv1.ModelsGetRequest{Id: "smoke-opt"}); connect.CodeOf(err) != connect.CodeNotFound {
@@ -606,7 +606,7 @@ func TestRealSubscriptionsServerOnFakeHub(t *testing.T) {
 		t.Fatalf("managed policy not synced: %#v", after.GetAuthPolicies())
 	}
 
-	if _, err := s.Delete(ctx, &aigridv1.SubscriptionsDeleteRequest{Id: "team-smoke"}); err != nil {
+	if _, err := s.Delete(ctx, &aigridv1.SubscriptionsDeleteRequest{Id: "team-smoke", Version: after.GetObject().GetMetadata().GetVersion()}); err != nil {
 		t.Fatalf("Delete() error = %v", err)
 	}
 	if _, err := s.Get(ctx, &aigridv1.SubscriptionsGetRequest{Id: "team-smoke"}); connect.CodeOf(err) != connect.CodeNotFound {

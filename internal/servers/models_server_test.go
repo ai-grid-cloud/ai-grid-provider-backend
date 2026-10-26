@@ -103,7 +103,7 @@ func TestModelsCRUDHubOnly(t *testing.T) {
 		t.Fatalf("updated replicas = %v", updated.GetObject().GetSpec().Replicas)
 	}
 
-	if _, err := srv.Delete(ctx, &aigridv1.ModelsDeleteRequest{Id: "tiny-llm"}); err != nil {
+	if _, err := srv.Delete(ctx, &aigridv1.ModelsDeleteRequest{Id: "tiny-llm", Version: setModelVersion(t, client, "tiny-llm")}); err != nil {
 		t.Fatalf("Delete() error = %v", err)
 	}
 	if _, err := client.Resource(testLLMGVR).Namespace("ai-grid-internal-models").Get(ctx, "tiny-llm", metav1.GetOptions{}); err == nil {
@@ -231,7 +231,7 @@ func TestModelsDeleteGuardedBySubscription(t *testing.T) {
 	if _, err := srv.Create(ctx, &aigridv1.ModelsCreateRequest{Object: sampleModel("guarded")}); err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	_, err := srv.Delete(ctx, &aigridv1.ModelsDeleteRequest{Id: "guarded"})
+	_, err := srv.Delete(ctx, &aigridv1.ModelsDeleteRequest{Id: "guarded", Version: setModelVersion(t, client, "guarded")})
 	assertConnectCode(t, err, connect.CodeFailedPrecondition)
 }
 
@@ -592,12 +592,13 @@ func TestModelsDeleteGuardedByAuthPolicy(t *testing.T) {
 			},
 		},
 	}}
-	srv := mustModelsServer(t, newModelsClient(pol))
+	client := newModelsClient(pol)
+	srv := mustModelsServer(t, client)
 	ctx := context.Background()
 	if _, err := srv.Create(ctx, &aigridv1.ModelsCreateRequest{Object: sampleModel("pol-guarded")}); err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	_, err := srv.Delete(ctx, &aigridv1.ModelsDeleteRequest{Id: "pol-guarded"})
+	_, err := srv.Delete(ctx, &aigridv1.ModelsDeleteRequest{Id: "pol-guarded", Version: setModelVersion(t, client, "pol-guarded")})
 	assertConnectCode(t, err, connect.CodeFailedPrecondition)
 }
 
@@ -726,6 +727,48 @@ func TestModelsDeleteGuardedBySubscriptionWithDefaultNamespace(t *testing.T) {
 	if _, err := subs.Create(ctx, &aigridv1.SubscriptionsCreateRequest{Object: sampleSubscription("uses-sim")}); err != nil {
 		t.Fatalf("Subscriptions Create() error = %v", err)
 	}
-	_, err := models.Delete(ctx, &aigridv1.ModelsDeleteRequest{Id: "sim-model"})
+	_, err := models.Delete(ctx, &aigridv1.ModelsDeleteRequest{Id: "sim-model", Version: setModelVersion(t, client, "sim-model")})
 	assertConnectCode(t, err, connect.CodeFailedPrecondition)
+}
+
+// Delete requires the version the caller read: zero is InvalidArgument and a
+// stale one is Aborted; neither deletes anything.
+func TestModelsDeleteRequiresVersion(t *testing.T) {
+	t.Parallel()
+	client := newModelsClient()
+	srv := mustModelsServer(t, client)
+	ctx := context.Background()
+	if _, err := srv.Create(ctx, &aigridv1.ModelsCreateRequest{Object: sampleModel("versioned")}); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	version := setModelVersion(t, client, "versioned")
+
+	_, err := srv.Delete(ctx, &aigridv1.ModelsDeleteRequest{Id: "versioned"})
+	assertConnectCode(t, err, connect.CodeInvalidArgument)
+	_, err = srv.Delete(ctx, &aigridv1.ModelsDeleteRequest{Id: "versioned", Version: version + 1})
+	assertConnectCode(t, err, connect.CodeAborted)
+	if _, err := client.Resource(testLLMGVR).Namespace("ai-grid-internal-models").Get(ctx, "versioned", metav1.GetOptions{}); err != nil {
+		t.Fatalf("a refused delete removed the model: %v", err)
+	}
+
+	if _, err := srv.Delete(ctx, &aigridv1.ModelsDeleteRequest{Id: "versioned", Version: version}); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+}
+
+// setModelVersion gives a stored LLMInferenceService a resourceVersion, which
+// the fake dynamic client never assigns, and returns it as metadata.version.
+func setModelVersion(t *testing.T, client *fake.FakeDynamicClient, id string) int32 {
+	t.Helper()
+	ctx := context.Background()
+	res := client.Resource(testLLMGVR).Namespace("ai-grid-internal-models")
+	obj, err := res.Get(ctx, id, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get %s: %v", id, err)
+	}
+	obj.SetResourceVersion("7")
+	if _, err := res.Update(ctx, obj, metav1.UpdateOptions{}); err != nil {
+		t.Fatalf("set the version of %s: %v", id, err)
+	}
+	return 7
 }

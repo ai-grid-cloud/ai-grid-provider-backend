@@ -320,6 +320,19 @@ func (s *SubscriptionsServer) Delete(ctx context.Context, req *aigridv1.Subscrip
 	if err := validateSubscriptionID(id); err != nil {
 		return nil, err
 	}
+	version := req.GetVersion()
+	if version == 0 {
+		return nil, connect.NewError(connect.CodeInvalidArgument, "a version is required: send the subscription's metadata.version")
+	}
+	current, err := s.client.Resource(maasSubscriptionsResource).Namespace(s.namespace).Get(ctx, id, metav1.GetOptions{})
+	if err != nil {
+		return nil, mapSubscriptionAPIError("delete", id, err)
+	}
+	rv := strconv.FormatInt(int64(version), 10)
+	if current.GetResourceVersion() != rv {
+		return nil, staleSubscriptionError("delete", id)
+	}
+
 	// Remove the managed policy first: if it can't be removed, the subscription stays
 	// so the caller can retry, instead of leaving a policy that keeps granting access.
 	policyName := authPolicyNameForSubscription(id)
@@ -335,7 +348,8 @@ func (s *SubscriptionsServer) Delete(ctx context.Context, req *aigridv1.Subscrip
 		return nil, mapSubscriptionAPIError("get auth policy", id, err)
 	}
 
-	if err := s.client.Resource(maasSubscriptionsResource).Namespace(s.namespace).Delete(ctx, id, metav1.DeleteOptions{}); err != nil {
+	// The precondition makes the version check atomic on the API server.
+	if err := s.client.Resource(maasSubscriptionsResource).Namespace(s.namespace).Delete(ctx, id, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{ResourceVersion: &rv}}); err != nil {
 		return nil, mapSubscriptionAPIError("delete", id, err)
 	}
 	return &aigridv1.SubscriptionsDeleteResponse{}, nil

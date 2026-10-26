@@ -378,8 +378,8 @@
             "type": "string"
           },
           {
-            "name": "resource_version",
-            "description": "Expected version: when set (non-zero), delete fails with Aborted unless\nit equals the stored metadata.version. Zero skips the check.",
+            "name": "version",
+            "description": "The model's metadata.version as the caller last read it. Required: zero\nis InvalidArgument, and a value that differs from the stored version is\nAborted, so a caller doesn't delete changes it hasn't seen.",
             "in": "query",
             "required": false,
             "type": "integer",
@@ -618,6 +618,14 @@
             "in": "path",
             "required": true,
             "type": "string"
+          },
+          {
+            "name": "version",
+            "description": "The subscription's metadata.version as the caller last read it.\nRequired: zero is InvalidArgument, and a value that differs from the\nstored version is Aborted, so a caller doesn't delete changes it hasn't\nseen.",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
           }
         ],
         "tags": [

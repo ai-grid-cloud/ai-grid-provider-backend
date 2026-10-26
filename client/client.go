@@ -213,9 +213,10 @@ func (c *Client) UpdateModel(ctx context.Context, object *aigridv1.Model, mask *
 	return response.GetObject(), nil
 }
 
-// DeleteModel deletes a Model by id.
-func (c *Client) DeleteModel(ctx context.Context, id string) error {
-	_, err := c.models.Delete(ctx, &aigridv1.ModelsDeleteRequest{Id: id})
+// DeleteModel deletes a Model by id, at the metadata.version the caller last
+// read.
+func (c *Client) DeleteModel(ctx context.Context, id string, version int32) error {
+	_, err := c.models.Delete(ctx, &aigridv1.ModelsDeleteRequest{Id: id, Version: version})
 	return err
 }
 
@@ -261,9 +262,10 @@ func (c *Client) UpdateSubscription(ctx context.Context, object *aigridv1.Subscr
 	return response.GetObject(), nil
 }
 
-// DeleteSubscription deletes a Subscription by id.
-func (c *Client) DeleteSubscription(ctx context.Context, id string) error {
-	_, err := c.subscriptions.Delete(ctx, &aigridv1.SubscriptionsDeleteRequest{Id: id})
+// DeleteSubscription deletes a Subscription by id, at the metadata.version the
+// caller last read.
+func (c *Client) DeleteSubscription(ctx context.Context, id string, version int32) error {
+	_, err := c.subscriptions.Delete(ctx, &aigridv1.SubscriptionsDeleteRequest{Id: id, Version: version})
 	return err
 }
 

@@ -357,14 +357,16 @@ func (s *ModelsServer) Delete(ctx context.Context, req *aigridv1.ModelsDeleteReq
 	if err := validateModelID(id); err != nil {
 		return nil, err
 	}
+	version := req.GetVersion()
+	if version == 0 {
+		return nil, connect.NewError(connect.CodeInvalidArgument, "a version is required: send the model's metadata.version")
+	}
 	current, err := s.client.Resource(llmInferenceServicesResource).Namespace(s.namespace).Get(ctx, id, metav1.GetOptions{})
 	if err != nil {
 		return nil, mapModelAPIError("get", id, err)
 	}
-	if rv := req.GetResourceVersion(); rv != 0 {
-		if strconv.FormatInt(int64(rv), 10) != current.GetResourceVersion() {
-			return nil, staleModelError("delete", id)
-		}
+	if strconv.FormatInt(int64(version), 10) != current.GetResourceVersion() {
+		return nil, staleModelError("delete", id)
 	}
 
 	if err := s.ensureNotReferenced(ctx, id); err != nil {

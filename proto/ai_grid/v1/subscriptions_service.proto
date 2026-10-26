@@ -81,6 +81,12 @@ message SubscriptionsUpdateResponse {
 message SubscriptionsDeleteRequest {
   // Subscription id (equals metadata.name).
   string id = 1;
+
+  // The subscription's metadata.version as the caller last read it.
+  // Required: zero is InvalidArgument, and a value that differs from the
+  // stored version is Aborted, so a caller doesn't delete changes it hasn't
+  // seen.
+  int32 version = 2;
 }
 
 message SubscriptionsDeleteResponse {}

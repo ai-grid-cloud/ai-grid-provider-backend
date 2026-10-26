@@ -21,6 +21,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic/fake"
+	clienttesting "k8s.io/client-go/testing"
 )
 
 var managedClustersResource = schema.GroupVersionResource{
@@ -290,7 +291,7 @@ func TestClientModelsCRUD(t *testing.T) {
 		t.Fatalf("updated replicas = %v", updated.GetSpec().Replicas)
 	}
 
-	if err := c.DeleteModel(ctx, "client-opt"); err != nil {
+	if err := c.DeleteModel(ctx, "client-opt", 1); err != nil {
 		t.Fatalf("DeleteModel() error = %v", err)
 	}
 	_, err = c.GetModel(ctx, "client-opt")
@@ -350,7 +351,7 @@ func TestClientSubscriptionsCRUD(t *testing.T) {
 		t.Fatalf("updated priority = %d", updated.GetSpec().GetPriority())
 	}
 
-	if err := c.DeleteSubscription(ctx, "free-subscription"); err != nil {
+	if err := c.DeleteSubscription(ctx, "free-subscription", 1); err != nil {
 		t.Fatalf("DeleteSubscription() error = %v", err)
 	}
 	_, err = c.GetSubscription(ctx, "free-subscription")
@@ -496,6 +497,14 @@ func startTestClient(t *testing.T, objects []runtime.Object, orgs organizationCl
 		},
 		objects...,
 	)
+	// The fake assigns no resourceVersion; give created objects one, so the
+	// required Delete versions have something to match.
+	dynamicClient.PrependReactor("create", "*", func(action clienttesting.Action) (bool, runtime.Object, error) {
+		if obj, ok := action.(clienttesting.CreateAction).GetObject().(*unstructured.Unstructured); ok && obj.GetResourceVersion() == "" {
+			obj.SetResourceVersion("1")
+		}
+		return false, nil, nil
+	})
 
 	aiGridServer, err := servers.NewAiGridServer().Build()
 	if err != nil {

@@ -24,12 +24,12 @@ The current API includes:
 - `ai_grid.v1.Models/Get`
 - `ai_grid.v1.Models/Create` (deploys: LLMInferenceService + MaaSModelRef; optional Placement + ManifestWorkReplicaSet)
 - `ai_grid.v1.Models/Update`
-- `ai_grid.v1.Models/Delete`
+- `ai_grid.v1.Models/Delete` (requires `version`, the model's `metadata.version`; stale is `Aborted`)
 - `ai_grid.v1.Subscriptions/List`
 - `ai_grid.v1.Subscriptions/Get` (gRPC/REST join covering AuthPolicies + ModelRegistrations; the Go `client.GetSubscription` helper returns the Subscription object only)
 - `ai_grid.v1.Subscriptions/Create` (managed `MaaSAuthPolicy` `<id>-policy`; returned in response)
 - `ai_grid.v1.Subscriptions/Update` (replaces the masked labels, annotations and spec; overwrites the managed AuthPolicy spec, recreating it when missing)
-- `ai_grid.v1.Subscriptions/Delete` (deletes managed AuthPolicy when present)
+- `ai_grid.v1.Subscriptions/Delete` (requires `version`, the subscription's `metadata.version`; stale is `Aborted`; deletes the managed AuthPolicy first)
 
 REST and Swagger UI are also exposed on HTTP `:8081`:
 

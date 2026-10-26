@@ -45,6 +45,14 @@ cleanup_tenant_ids=()
 cleanup_model_ids=()
 cleanup_subscription_ids=()
 
+# current_version SERVICE ID prints the object's metadata.version (0 when the
+# Get fails): Models and Subscriptions Delete require it.
+current_version() {
+  local out
+  out="$(grpcurl -plaintext -d "{\"id\":\"$2\"}" "$addr" "ai_grid.v1.$1/Get" 2>/dev/null)" || { echo 0; return; }
+  printf '%s' "$out" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("object",{}).get("metadata",{}).get("version",0))' 2>/dev/null || echo 0
+}
+
 smoke_cleanup() {
   local id
   for id in "${cleanup_cluster_ids[@]+"${cleanup_cluster_ids[@]}"}"; do
@@ -59,13 +67,11 @@ smoke_cleanup() {
   done
   for id in "${cleanup_model_ids[@]+"${cleanup_model_ids[@]}"}"; do
     [[ -n "$id" ]] || continue
-    grpcurl -plaintext -d "{\"id\":\"${id}\"}" "$addr" ai_grid.v1.Models/Delete >/dev/null 2>&1 || true
-    curl -sS -o /dev/null -X DELETE "${http_addr}/api/v1/models/${id}" >/dev/null 2>&1 || true
+    grpcurl -plaintext -d "{\"id\":\"${id}\",\"version\":$(current_version Models "$id")}" "$addr" ai_grid.v1.Models/Delete >/dev/null 2>&1 || true
   done
   for id in "${cleanup_subscription_ids[@]+"${cleanup_subscription_ids[@]}"}"; do
     [[ -n "$id" ]] || continue
-    grpcurl -plaintext -d "{\"id\":\"${id}\"}" "$addr" ai_grid.v1.Subscriptions/Delete >/dev/null 2>&1 || true
-    curl -sS -o /dev/null -X DELETE "${http_addr}/api/v1/subscriptions/${id}" >/dev/null 2>&1 || true
+    grpcurl -plaintext -d "{\"id\":\"${id}\",\"version\":$(current_version Subscriptions "$id")}" "$addr" ai_grid.v1.Subscriptions/Delete >/dev/null 2>&1 || true
   done
 }
 trap smoke_cleanup EXIT
@@ -288,12 +294,12 @@ else
       call_grpc 'Models/Update (update_mask=spec.replicas)' \
         "{\"object\":{\"id\":\"${smoke_model_grpc}\",\"metadata\":{\"name\":\"${smoke_model_grpc}\"},\"spec\":{\"replicas\":2}},\"update_mask\":{\"paths\":[\"spec.replicas\"]}}" \
         'ai_grid.v1.Models/Update'
-      call_grpc 'Models/Delete' "{\"id\":\"${smoke_model_grpc}\"}" 'ai_grid.v1.Models/Delete'
+      call_grpc 'Models/Delete' "{\"id\":\"${smoke_model_grpc}\",\"version\":$(current_version Models "$smoke_model_grpc")}" 'ai_grid.v1.Models/Delete'
     fi
 
     call_http 'GET /api/v1/models' GET '/api/v1/models'
     call_http 'GET /api/v1/models?limit=1' GET '/api/v1/models?limit=1'
-    curl -sS -o /dev/null -X DELETE "${http_addr}/api/v1/models/${smoke_model_rest}" || true
+    curl -sS -o /dev/null -X DELETE "${http_addr}/api/v1/models/${smoke_model_rest}?version=$(current_version Models "$smoke_model_rest")" || true
 
     before_failed=$failed
     call_http 'POST /api/v1/models' POST '/api/v1/models' \
@@ -304,7 +310,7 @@ else
       # HTTP body is the Model (proto body: "object"); FieldMask is a query param.
       call_http "PATCH /api/v1/models/${smoke_model_rest}" PATCH "/api/v1/models/${smoke_model_rest}?update_mask=spec.replicas" \
         "{\"id\":\"${smoke_model_rest}\",\"metadata\":{\"name\":\"${smoke_model_rest}\"},\"spec\":{\"replicas\":2}}"
-      call_http "DELETE /api/v1/models/${smoke_model_rest}" DELETE "/api/v1/models/${smoke_model_rest}"
+      call_http "DELETE /api/v1/models/${smoke_model_rest}" DELETE "/api/v1/models/${smoke_model_rest}?version=$(current_version Models "$smoke_model_rest")"
     fi
   fi
 fi
@@ -318,7 +324,7 @@ else
   else
     call_grpc 'Subscriptions/List' '{}' 'ai_grid.v1.Subscriptions/List'
     call_grpc 'Subscriptions/List (limit=1)' '{"limit":1}' 'ai_grid.v1.Subscriptions/List'
-    grpcurl -plaintext -d "{\"id\":\"${smoke_sub_grpc}\"}" "$addr" \
+    grpcurl -plaintext -d "{\"id\":\"${smoke_sub_grpc}\",\"version\":$(current_version Subscriptions "$smoke_sub_grpc")}" "$addr" \
       ai_grid.v1.Subscriptions/Delete >/dev/null 2>&1 || true
 
     before_failed=$failed
@@ -331,12 +337,12 @@ else
       call_grpc 'Subscriptions/Update (update_mask=spec)' \
         "{\"object\":{\"id\":\"${smoke_sub_grpc}\",\"metadata\":{\"name\":\"${smoke_sub_grpc}\"},\"spec\":{\"owner\":{\"groups\":[\"smoke-admins\"]},\"model_refs\":[{\"name\":\"tiny-llm\",\"namespace\":\"llm\",\"token_rate_limits\":[{\"limit\":50,\"window\":\"1m\"}]}],\"priority\":9,\"organization\":{\"id\":\"smoke-org\"}}},\"update_mask\":{\"paths\":[\"spec\"]}}" \
         'ai_grid.v1.Subscriptions/Update'
-      call_grpc 'Subscriptions/Delete' "{\"id\":\"${smoke_sub_grpc}\"}" 'ai_grid.v1.Subscriptions/Delete'
+      call_grpc 'Subscriptions/Delete' "{\"id\":\"${smoke_sub_grpc}\",\"version\":$(current_version Subscriptions "$smoke_sub_grpc")}" 'ai_grid.v1.Subscriptions/Delete'
     fi
 
     call_http 'GET /api/v1/subscriptions' GET '/api/v1/subscriptions'
     call_http 'GET /api/v1/subscriptions?limit=1' GET '/api/v1/subscriptions?limit=1'
-    curl -sS -o /dev/null -X DELETE "${http_addr}/api/v1/subscriptions/${smoke_sub_rest}" || true
+    curl -sS -o /dev/null -X DELETE "${http_addr}/api/v1/subscriptions/${smoke_sub_rest}?version=$(current_version Subscriptions "$smoke_sub_rest")" || true
 
     before_failed=$failed
     call_http 'POST /api/v1/subscriptions' POST '/api/v1/subscriptions' \
@@ -346,7 +352,7 @@ else
       call_http "GET /api/v1/subscriptions/${smoke_sub_rest}" GET "/api/v1/subscriptions/${smoke_sub_rest}"
       call_http "PATCH /api/v1/subscriptions/${smoke_sub_rest}" PATCH "/api/v1/subscriptions/${smoke_sub_rest}" \
         "{\"id\":\"${smoke_sub_rest}\",\"metadata\":{\"name\":\"${smoke_sub_rest}\"},\"spec\":{\"owner\":{\"groups\":[\"smoke-admins\"]},\"model_refs\":[{\"name\":\"tiny-llm\",\"namespace\":\"llm\",\"token_rate_limits\":[{\"limit\":50,\"window\":\"1m\"}]}],\"priority\":9,\"organization\":{\"id\":\"smoke-org\"}}}"
-      call_http "DELETE /api/v1/subscriptions/${smoke_sub_rest}" DELETE "/api/v1/subscriptions/${smoke_sub_rest}"
+      call_http "DELETE /api/v1/subscriptions/${smoke_sub_rest}" DELETE "/api/v1/subscriptions/${smoke_sub_rest}?version=$(current_version Subscriptions "$smoke_sub_rest")"
     fi
   fi
 fi
