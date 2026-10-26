@@ -201,9 +201,6 @@ func TestModelsCreateMWRSDisabled(t *testing.T) {
 
 func TestModelsDeleteGuardedBySubscription(t *testing.T) {
 	t.Parallel()
-	client := newModelsClient(
-		subscriptionUnstructured("sub-a", "models-as-a-service"),
-	)
 	// Point subscription at our model namespace/name.
 	sub := subscriptionUnstructured("sub-a", "models-as-a-service")
 	_ = unstructured.SetNestedSlice(sub.Object, []interface{}{
@@ -215,7 +212,7 @@ func TestModelsDeleteGuardedBySubscription(t *testing.T) {
 			},
 		},
 	}, "spec", "modelRefs")
-	client = newModelsClient(sub)
+	client := newModelsClient(sub)
 
 	srv := mustModelsServer(t, client)
 	ctx := context.Background()

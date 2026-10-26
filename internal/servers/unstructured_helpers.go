@@ -62,14 +62,6 @@ func nestedInt64(obj map[string]interface{}, fields ...string) int64 {
 	return v
 }
 
-func nestedBool(obj map[string]interface{}, fields ...string) bool {
-	v, found, err := unstructured.NestedBool(obj, fields...)
-	if err != nil || !found {
-		return false
-	}
-	return v
-}
-
 func stringField(obj map[string]interface{}, key string) string {
 	v, _, _ := unstructured.NestedString(obj, key)
 	return v
