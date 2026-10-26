@@ -1,7 +1,16 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-namespace: ai-grid
+# Put resources with no namespace in ai-grid. unsetOnly keeps the Roles in
+# rbac-namespaced.yaml in the namespaces they name.
+transformers:
+  - |-
+    apiVersion: builtin
+    kind: NamespaceTransformer
+    metadata:
+      name: ai-grid-namespace
+      namespace: ai-grid
+    unsetOnly: true
 
 labels:
   - pairs:
@@ -13,10 +22,9 @@ resources:
   - namespace.yaml
   - serviceaccount.yaml
   - rbac.yaml
+  - rbac-namespaced.yaml
   - backend-deployment.yaml
   - backend-service.yaml
-  - backend-route-http.yaml
-  - backend-route-grpc.yaml
 
 images:
   - name: ai-grid-provider-backend

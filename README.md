@@ -93,9 +93,12 @@ named `<subscription-id>-policy` when managed by this service. A model ref with
 no `namespace` gets the models namespace (`AI_GRID_MODELS_NAMESPACE`), where
 the Models API writes each MaaSModelRef.
 
-The service runs in-cluster using its Kubernetes ServiceAccount. Its RBAC role
-allows `get`, `list`, `watch`, `create`, `update`, `patch`, and `delete` on
-`ManagedCluster` resources.
+The service runs in-cluster using its Kubernetes ServiceAccount. Its
+ClusterRole allows `get`, `list`, `watch`, `create`, `update`, `patch`, and
+`delete` on `ManagedCluster` resources, and only `get` and `list` on
+`MaaSModelRef`. Model and subscription writes are granted by Roles in
+`AI_GRID_MODELS_NAMESPACE` and `AI_GRID_SUBSCRIPTION_NAMESPACE` only
+(`deploy/openshift/rbac-namespaced.yaml`).
 
 Tenants CRUD maps to **Keycloak Organizations** in one shared platform realm
 (`KEYCLOAK_REALM`, default `ai-grid`) through the Keycloak Admin REST API.
@@ -483,8 +486,17 @@ have real ACM clusters, skip backend sample CRs with
 ## Deploy to OpenShift
 
 Kind-parity stack for a logged-in OpenShift cluster (`oc whoami`): backend,
-optional embedded Keycloak + Postgres (Tenants API), Routes for HTTP and gRPC,
-RHACM when needed (Clusters API), and sample ManagedClusters.
+optional embedded Keycloak + Postgres (Tenants API), RHACM when needed
+(Clusters API), and sample ManagedClusters. It creates no Routes: the API has
+no authentication, so reach it with `oc port-forward` or from inside the
+cluster.
+
+The backend's RBAC writes models only in `ai-grid-internal-models` and
+subscriptions only in `models-as-a-service`. `make openshift-up` creates both
+namespaces if they're missing, and `make openshift-down` leaves them. If you
+apply the manifests yourself, create the namespaces first. If you change
+`AI_GRID_MODELS_NAMESPACE` or `AI_GRID_SUBSCRIPTION_NAMESPACE`, change the Role
+namespaces in `deploy/openshift/rbac-namespaced.yaml` to match.
 
 Default image: [`ghcr.io/ai-grid-cloud/ai-grid-provider-backend`](https://github.com/ai-grid-cloud/ai-grid-provider-backend/pkgs/container/ai-grid-provider-backend).
 
@@ -554,8 +566,7 @@ that permission, or without the Policy, `provisioning` is empty.
 If Keycloak or Postgres pods are rejected by SCC, re-run with
 `GRANT_ANYUID=1` (or grant `anyuid` to the `default` SA in `ai-grid`).
 
-After deploy, the HTTP Route serves REST and Swagger UI. For plaintext
-`grpcurl`, prefer port-forward:
+After deploy, reach REST, Swagger UI and gRPC through port-forward:
 
 ```sh
 oc -n ai-grid port-forward svc/ai-grid-provider-backend 8080:8080 8081:8081
@@ -582,7 +593,7 @@ internal/servers/tenants_server.go Keycloak-backed tenant API
 internal/keycloak/               Keycloak Admin API client
 internal/restgateway/            HTTP gateway + Swagger UI
 deploy/kind/                     Kind Kubernetes manifests
-deploy/openshift/                OpenShift manifests (Routes, kustomize)
+deploy/openshift/                OpenShift manifests (kustomize)
 deploy/acm-hub/                  Helm chart + scripts for RHACM hub playground
 hack/kind-up.sh                  build/load/deploy helper
 hack/ocm-up.sh                   OCM bootstrap helper

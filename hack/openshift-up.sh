@@ -167,6 +167,12 @@ if [[ "$BUILD_IMAGE" == "1" ]]; then
   podman push "${IMAGE}"
 fi
 
+# The namespaced Roles in rbac-namespaced.yaml need their namespaces. Create
+# them here, not in the manifests, so openshift-down never deletes them.
+for ns in ai-grid-internal-models models-as-a-service; do
+  oc create namespace "${ns}" --dry-run=client -o yaml | oc apply -f -
+done
+
 echo "==> applying backend manifests to namespace ${NAMESPACE} with image ${IMAGE}"
 kustomize_build \
   | sed -e "s#${DEFAULT_IMAGE}#${IMAGE}#g" \

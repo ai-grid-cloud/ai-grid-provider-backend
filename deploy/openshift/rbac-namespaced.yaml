@@ -1,0 +1,72 @@
+# Model and subscription writes, granted only in the namespaces the backend
+# writes to. A ClusterRole would let the API write these kinds in every
+# namespace. Change the namespaces here if you change AI_GRID_MODELS_NAMESPACE
+# or AI_GRID_SUBSCRIPTION_NAMESPACE in backend-deployment.yaml. Both
+# namespaces must exist before you apply; hack/openshift-up.sh creates them.
+#
+# Models CRUD: LLMInferenceService, its MaaSModelRef, and the optional
+# Placement / ManifestWorkReplicaSet, in AI_GRID_MODELS_NAMESPACE (default
+# ai-grid-internal-models). PlacementDecisions are only read.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ai-grid-provider-backend-models
+  namespace: ai-grid-internal-models
+rules:
+  - apiGroups: ["serving.kserve.io"]
+    resources: ["llminferenceservices"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
+  - apiGroups: ["maas.opendatahub.io"]
+    resources: ["maasmodelrefs"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
+  - apiGroups: ["cluster.open-cluster-management.io"]
+    resources: ["placements"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
+  - apiGroups: ["cluster.open-cluster-management.io"]
+    resources: ["placementdecisions"]
+    verbs: ["get", "list"]
+  - apiGroups: ["work.open-cluster-management.io"]
+    resources: ["manifestworkreplicasets"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ai-grid-provider-backend-models
+  namespace: ai-grid-internal-models
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: ai-grid-provider-backend-models
+subjects:
+  - kind: ServiceAccount
+    name: ai-grid-provider-backend
+    namespace: ai-grid
+---
+# Subscriptions CRUD with the managed <id>-policy MaaSAuthPolicy, and the
+# Models Delete guard that lists both, in AI_GRID_SUBSCRIPTION_NAMESPACE
+# (default models-as-a-service). MaaSModelRef writes are allowed here too, for
+# when the Models API registers models in this namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ai-grid-provider-backend-subscriptions
+  namespace: models-as-a-service
+rules:
+  - apiGroups: ["maas.opendatahub.io"]
+    resources: ["maassubscriptions", "maasauthpolicies", "maasmodelrefs"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ai-grid-provider-backend-subscriptions
+  namespace: models-as-a-service
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: ai-grid-provider-backend-subscriptions
+subjects:
+  - kind: ServiceAccount
+    name: ai-grid-provider-backend
+    namespace: ai-grid

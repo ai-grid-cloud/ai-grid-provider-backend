@@ -24,35 +24,18 @@ rules:
   # ai-grid-policies/ai-grid-ready). get on that one name only: other
   # Policies, and the per-cluster copies (named ai-grid-policies.ai-grid-ready)
   # where ACM renders hub templates such as fromSecret, stay unreadable. A
-  # Role in ai-grid-policies would be narrower, but this kustomization's
-  # namespace: ai-grid would move it. Change the name here if you change
-  # AI_GRID_READY_POLICY.
+  # Role in ai-grid-policies would be narrower. Change the name here if you
+  # change AI_GRID_READY_POLICY.
   - apiGroups: ["policy.open-cluster-management.io"]
     resources: ["policies"]
     resourceNames: ["ai-grid-ready"]
     verbs: ["get"]
-  # Subscriptions CRUD (+ managed AuthPolicy) and Models Delete guards against MaaS CRs.
-  # Objects live in AI_GRID_SUBSCRIPTION_NAMESPACE (default models-as-a-service).
-  - apiGroups: ["maas.opendatahub.io"]
-    resources: ["maassubscriptions", "maasauthpolicies"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # Get/List enrich model_refs and return model_registrations from MaaSModelRef.
-  # Models Create/Update/Delete also write MaaSModelRef in AI_GRID_MODELS_NAMESPACE.
-  # Subscriptions Get/List enrich model_refs and return model_registrations (read).
+  # Subscriptions Get/List and Models Get/List read MaaSModelRef in whatever
+  # namespace a subscription's model_refs name, so get/list stay cluster-wide.
+  # Writes are granted only in the namespaced Roles in rbac-namespaced.yaml.
   - apiGroups: ["maas.opendatahub.io"]
     resources: ["maasmodelrefs"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # Models CRUD: LLMInferenceService (+ optional Placement / ManifestWorkReplicaSet).
-  # Objects live in AI_GRID_MODELS_NAMESPACE (default ai-grid-internal-models).
-  - apiGroups: ["serving.kserve.io"]
-    resources: ["llminferenceservices"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["cluster.open-cluster-management.io"]
-    resources: ["placements", "placementdecisions"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["work.open-cluster-management.io"]
-    resources: ["manifestworkreplicasets"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    verbs: ["get", "list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
