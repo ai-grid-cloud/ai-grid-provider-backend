@@ -39,7 +39,7 @@ func TestSubscriptionsServerRequiresClient(t *testing.T) {
 func TestSubscriptionsCRUDAndAuthPolicyPairing(t *testing.T) {
 	t.Parallel()
 
-	client := newSubscriptionClient(modelRefUnstructured("sim-model", "llm", "Simulator", "Ready"))
+	client := newSubscriptionClient(modelRefUnstructured("sim-model", "ai-grid-internal-models", "Simulator", "Ready"))
 	srv := mustSubscriptionsServer(t, client)
 	ctx := context.Background()
 
@@ -575,4 +575,52 @@ func modelRefUnstructured(name, namespace, displayName, phase string) *unstructu
 			"endpoint": "/llm/" + name,
 		},
 	}}
+}
+
+// A model ref with no namespace must point at the namespace where the Models
+// API writes its MaaSModelRef (the models namespace), in both the
+// MaaSSubscription and the managed MaaSAuthPolicy.
+func TestSubscriptionModelRefDefaultsToModelsNamespace(t *testing.T) {
+	t.Parallel()
+	client := newSubscriptionClient()
+	srv := mustSubscriptionsServer(t, client)
+	ctx := context.Background()
+
+	if _, err := srv.Create(ctx, &aigridv1.SubscriptionsCreateRequest{Object: sampleSubscription("defaults")}); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	sub, err := client.Resource(testSubscriptionsGVR).Namespace("models-as-a-service").Get(ctx, "defaults", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get subscription: %v", err)
+	}
+	pol, err := client.Resource(testAuthPoliciesGVR).Namespace("models-as-a-service").Get(ctx, "defaults-policy", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get auth policy: %v", err)
+	}
+	for kind, obj := range map[string]*unstructured.Unstructured{"subscription": sub, "auth policy": pol} {
+		refs, _, _ := unstructured.NestedSlice(obj.Object, "spec", "modelRefs")
+		if len(refs) != 1 {
+			t.Fatalf("%s modelRefs = %v", kind, refs)
+		}
+		if ns := refs[0].(map[string]interface{})["namespace"]; ns != "ai-grid-internal-models" {
+			t.Errorf("%s modelRefs[0].namespace = %v, want ai-grid-internal-models", kind, ns)
+		}
+	}
+
+	custom := newSubscriptionClient()
+	customSrv, err := NewSubscriptionsServer().SetDynamicClient(custom).SetModelNamespace("custom-models").Build()
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if _, err := customSrv.Create(ctx, &aigridv1.SubscriptionsCreateRequest{Object: sampleSubscription("custom")}); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	sub, err = custom.Resource(testSubscriptionsGVR).Namespace("models-as-a-service").Get(ctx, "custom", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get subscription: %v", err)
+	}
+	refs, _, _ := unstructured.NestedSlice(sub.Object, "spec", "modelRefs")
+	if ns := refs[0].(map[string]interface{})["namespace"]; ns != "custom-models" {
+		t.Errorf("SetModelNamespace: modelRefs[0].namespace = %v, want custom-models", ns)
+	}
 }

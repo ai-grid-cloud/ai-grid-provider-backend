@@ -13,7 +13,6 @@ import (
 // Shared labels / namespaces / GVRs used by Models and Subscriptions.
 const (
 	defaultSubscriptionNamespace = "models-as-a-service"
-	defaultModelNamespace        = "llm"
 
 	managedByLabelKey   = "app.kubernetes.io/managed-by"
 	managedByLabelValue = "ai-grid-provider-backend"
@@ -98,8 +97,5 @@ func stringField(obj map[string]interface{}, key string) string {
 }
 
 func modelRefKey(name, namespace string) string {
-	if namespace == "" {
-		namespace = defaultModelNamespace
-	}
 	return namespace + "/" + name
 }

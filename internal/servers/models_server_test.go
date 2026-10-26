@@ -460,3 +460,22 @@ func sampleModel(id string) *aigridv1.Model {
 		},
 	}
 }
+
+// A subscription created through the Subscriptions API without a model
+// namespace must still block deleting the model it names.
+func TestModelsDeleteGuardedBySubscriptionWithDefaultNamespace(t *testing.T) {
+	t.Parallel()
+	client := newModelsClient()
+	models := mustModelsServer(t, client)
+	subs := mustSubscriptionsServer(t, client)
+	ctx := context.Background()
+
+	if _, err := models.Create(ctx, &aigridv1.ModelsCreateRequest{Object: sampleModel("sim-model")}); err != nil {
+		t.Fatalf("Models Create() error = %v", err)
+	}
+	if _, err := subs.Create(ctx, &aigridv1.SubscriptionsCreateRequest{Object: sampleSubscription("uses-sim")}); err != nil {
+		t.Fatalf("Subscriptions Create() error = %v", err)
+	}
+	_, err := models.Delete(ctx, &aigridv1.ModelsDeleteRequest{Id: "sim-model"})
+	assertConnectCode(t, err, connect.CodeFailedPrecondition)
+}

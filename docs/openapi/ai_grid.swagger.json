@@ -1803,7 +1803,7 @@
         },
         "namespace": {
           "type": "string",
-          "description": "Model namespace. Empty means the platform default model namespace."
+          "description": "Namespace of the MaaSModelRef. Empty means the models namespace, where\nthe Models API writes each MaaSModelRef (AI_GRID_MODELS_NAMESPACE,\ndefault ai-grid-internal-models); the backend fills it in on write."
         },
         "token_rate_limits": {
           "type": "array",

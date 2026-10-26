@@ -26,7 +26,8 @@ func TestSubscriptionRoundTrip(t *testing.T) {
 			},
 			ModelRefs: []*aigridv1.SubscriptionModelRef{
 				{
-					Name: "sim-model",
+					Name:      "sim-model",
+					Namespace: defaultModelsNamespace,
 					TokenRateLimits: []*aigridv1.TokenRateLimit{
 						{Limit: 100, Window: "1m"},
 					},
@@ -48,8 +49,8 @@ func TestSubscriptionRoundTrip(t *testing.T) {
 		t.Fatalf("modelRefs len = %d", len(refs))
 	}
 	ref := refs[0].(map[string]interface{})
-	if ref["namespace"] != defaultModelNamespace {
-		t.Fatalf("default model namespace = %v, want %q", ref["namespace"], defaultModelNamespace)
+	if ref["namespace"] != defaultModelsNamespace {
+		t.Fatalf("model namespace = %v, want %q", ref["namespace"], defaultModelsNamespace)
 	}
 	groups, _, _ := unstructured.NestedSlice(obj.Object, "spec", "owner", "groups")
 	g0 := groups[0].(map[string]interface{})
@@ -73,7 +74,7 @@ func TestSubscriptionRoundTrip(t *testing.T) {
 	if got := out.GetSpec().GetOwner().GetGroups(); len(got) != 2 || got[0] != "system:authenticated" {
 		t.Fatalf("groups = %v", got)
 	}
-	if got := out.GetSpec().GetModelRefs()[0].GetNamespace(); got != defaultModelNamespace {
+	if got := out.GetSpec().GetModelRefs()[0].GetNamespace(); got != defaultModelsNamespace {
 		t.Fatalf("model namespace = %q", got)
 	}
 	if got := out.GetSpec().GetModelRefs()[0].GetTokenRateLimits()[0].GetLimit(); got != 100 {

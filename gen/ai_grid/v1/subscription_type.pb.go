@@ -313,7 +313,9 @@ type SubscriptionModelRef struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Model name (DNS-1123 label).
 	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	// Model namespace. Empty means the platform default model namespace.
+	// Namespace of the MaaSModelRef. Empty means the models namespace, where
+	// the Models API writes each MaaSModelRef (AI_GRID_MODELS_NAMESPACE,
+	// default ai-grid-internal-models); the backend fills it in on write.
 	Namespace string `protobuf:"bytes,2,opt,name=namespace,proto3" json:"namespace,omitempty"`
 	// Token rate limits for this model. Required unless unlimited is true.
 	// Must be empty when unlimited is true.

@@ -618,7 +618,7 @@ ModelRef enrichment on the page only. `total` is the match count after filter.
 | Field | Type | Notes |
 | --- | --- | --- |
 | `name` | string | MaaSModelRef name |
-| `namespace` | string | Defaults to `llm` on write |
+| `namespace` | string | MaaSModelRef namespace; defaults to `AI_GRID_MODELS_NAMESPACE` (`ai-grid-internal-models`) on write |
 | `token_rate_limits[]` | object | Required unless `unlimited` |
 | `unlimited` | bool | Mutually exclusive with `token_rate_limits` |
 | `billing_rate.per_token` | string | Optional |
@@ -647,7 +647,7 @@ curl -sS -X POST 'http://localhost:8081/api/v1/subscriptions' \
       "organization": {"id": "org-uuid"},
       "model_refs": [{
         "name": "facebook-opt-125m-simulated",
-        "namespace": "llm",
+        "namespace": "ai-grid-internal-models",
         "token_rate_limits": [{"limit": "100", "window": "1m"}]
       }],
       "priority": 10
@@ -735,7 +735,7 @@ curl -sS -X DELETE 'http://localhost:8081/api/v1/models/facebook-opt-125m'
 # Subscriptions create returns { object, authPolicy }; see Example create above
 curl -sS -X POST 'http://localhost:8081/api/v1/subscriptions' \
   -H 'Content-Type: application/json' \
-  -d '{"id":"smoke-sub","metadata":{"name":"smoke-sub"},"spec":{"owner":{"groups":["smoke"]},"model_refs":[{"name":"tiny-llm","namespace":"llm","token_rate_limits":[{"limit":50,"window":"1m"}]}],"priority":5}}'
+  -d '{"id":"smoke-sub","metadata":{"name":"smoke-sub"},"spec":{"owner":{"groups":["smoke"]},"model_refs":[{"name":"tiny-llm","namespace":"ai-grid-internal-models","token_rate_limits":[{"limit":50,"window":"1m"}]}],"priority":5}}'
 ```
 
 ---

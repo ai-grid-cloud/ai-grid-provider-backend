@@ -84,7 +84,9 @@ maas.opendatahub.io/v1alpha1/maasauthpolicies   # managed <id>-policy side-effec
 
 Point `--kubeconfig` at a cluster that has those CRDs (for example an RHOAI
 spoke with MaaS). Create/Update/Delete always maintain a paired AuthPolicy
-named `<subscription-id>-policy` when managed by this service.
+named `<subscription-id>-policy` when managed by this service. A model ref with
+no `namespace` gets the models namespace (`AI_GRID_MODELS_NAMESPACE`), where
+the Models API writes each MaaSModelRef.
 
 The service runs in-cluster using its Kubernetes ServiceAccount. Its RBAC role
 allows `get`, `list`, `watch`, `create`, `update`, `patch`, and `delete` on

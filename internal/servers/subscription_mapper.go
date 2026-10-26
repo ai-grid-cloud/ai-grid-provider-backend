@@ -244,13 +244,9 @@ func modelRefsToUnstructured(refs []*aigridv1.SubscriptionModelRef) []interface{
 		if ref == nil {
 			continue
 		}
-		ns := ref.GetNamespace()
-		if ns == "" {
-			ns = defaultModelNamespace
-		}
 		entry := map[string]interface{}{
 			"name":      ref.GetName(),
-			"namespace": ns,
+			"namespace": ref.GetNamespace(),
 		}
 		if ref.GetUnlimited() {
 			entry["unlimited"] = true
@@ -311,13 +307,9 @@ func authPolicyFromSubscription(object *aigridv1.Subscription, namespace string)
 		if ref == nil {
 			continue
 		}
-		ns := ref.GetNamespace()
-		if ns == "" {
-			ns = defaultModelNamespace
-		}
 		modelRefs = append(modelRefs, map[string]interface{}{
 			"name":      ref.GetName(),
-			"namespace": ns,
+			"namespace": ref.GetNamespace(),
 		})
 	}
 

@@ -71,9 +71,10 @@ func main() {
 		fmt.Fprintf(os.Stderr, "build Tenants server: %v\n", err)
 		os.Exit(1)
 	}
+	modelsNamespace := getEnv("AI_GRID_MODELS_NAMESPACE", "ai-grid-internal-models")
 	modelsServer, err := servers.NewModelsServer().
 		SetDynamicClient(kubeClient).
-		SetNamespace(getEnv("AI_GRID_MODELS_NAMESPACE", "ai-grid-internal-models")).
+		SetNamespace(modelsNamespace).
 		SetSubscriptionNamespace(getEnv("AI_GRID_SUBSCRIPTION_NAMESPACE", "models-as-a-service")).
 		Build()
 	if err != nil {
@@ -83,6 +84,7 @@ func main() {
 	subscriptionsServer, err := servers.NewSubscriptionsServer().
 		SetDynamicClient(kubeClient).
 		SetNamespace(getEnv("AI_GRID_SUBSCRIPTION_NAMESPACE", "models-as-a-service")).
+		SetModelNamespace(modelsNamespace).
 		Build()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "build Subscriptions server: %v\n", err)

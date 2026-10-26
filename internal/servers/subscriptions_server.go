@@ -23,9 +23,10 @@ import (
 
 // SubscriptionsServerBuilder configures a SubscriptionsServer.
 type SubscriptionsServerBuilder struct {
-	logger    *slog.Logger
-	client    dynamic.Interface
-	namespace string
+	logger         *slog.Logger
+	client         dynamic.Interface
+	namespace      string
+	modelNamespace string
 }
 
 // SubscriptionsServer implements ai_grid.v1.Subscriptions against namespaced
@@ -33,9 +34,10 @@ type SubscriptionsServerBuilder struct {
 // MaaSAuthPolicy named <id>-policy in the same namespace.
 type SubscriptionsServer struct {
 	aigridv1connect.UnimplementedSubscriptionsHandler
-	logger    *slog.Logger
-	client    dynamic.Interface
-	namespace string
+	logger         *slog.Logger
+	client         dynamic.Interface
+	namespace      string
+	modelNamespace string
 }
 
 var _ aigridv1connect.SubscriptionsHandler = (*SubscriptionsServer)(nil)
@@ -64,6 +66,14 @@ func (b *SubscriptionsServerBuilder) SetNamespace(namespace string) *Subscriptio
 	return b
 }
 
+// SetModelNamespace sets the namespace that a model ref with no namespace
+// points at: where the Models API writes its MaaSModelRef. Optional; defaults
+// to ai-grid-internal-models.
+func (b *SubscriptionsServerBuilder) SetModelNamespace(namespace string) *SubscriptionsServerBuilder {
+	b.modelNamespace = namespace
+	return b
+}
+
 // Build creates the SubscriptionsServer.
 func (b *SubscriptionsServerBuilder) Build() (*SubscriptionsServer, error) {
 	if b.client == nil {
@@ -77,7 +87,11 @@ func (b *SubscriptionsServerBuilder) Build() (*SubscriptionsServer, error) {
 	if namespace == "" {
 		namespace = defaultSubscriptionNamespace
 	}
-	return &SubscriptionsServer{logger: logger, client: b.client, namespace: namespace}, nil
+	modelNamespace := b.modelNamespace
+	if modelNamespace == "" {
+		modelNamespace = defaultModelsNamespace
+	}
+	return &SubscriptionsServer{logger: logger, client: b.client, namespace: namespace, modelNamespace: modelNamespace}, nil
 }
 
 // List returns MaaSSubscription objects from the configured namespace.
@@ -179,6 +193,7 @@ func (s *SubscriptionsServer) Create(ctx context.Context, req *aigridv1.Subscrip
 	if err := qualifyOwnerGroups(object.GetSpec()); err != nil {
 		return nil, err
 	}
+	defaultModelRefNamespaces(object.GetSpec(), s.modelNamespace)
 
 	policyName := authPolicyNameForSubscription(id)
 	if existing, err := s.client.Resource(maasAuthPoliciesResource).Namespace(s.namespace).Get(ctx, policyName, metav1.GetOptions{}); err == nil {
@@ -251,6 +266,7 @@ func (s *SubscriptionsServer) Update(ctx context.Context, req *aigridv1.Subscrip
 		if err := qualifyOwnerGroups(object.GetSpec()); err != nil {
 			return nil, err
 		}
+		defaultModelRefNamespaces(object.GetSpec(), s.modelNamespace)
 	}
 
 	patchBody := map[string]interface{}{}
@@ -348,7 +364,7 @@ func (s *SubscriptionsServer) loadModelRefs(ctx context.Context, sub *aigridv1.S
 		}
 		ns := ref.GetNamespace()
 		if ns == "" {
-			ns = defaultModelNamespace
+			ns = s.modelNamespace
 		}
 		key := modelRefKey(ref.GetName(), ns)
 		if _, ok := out[key]; ok {
@@ -582,5 +598,15 @@ func mapSubscriptionAPIError(op, id string, err error) error {
 		return connect.Errorf(connect.CodePermissionDenied, "%s Subscription %q: %v", op, id, err).WithCause(err)
 	default:
 		return connect.Errorf(connect.CodeInternal, "%s Subscription %q: %v", op, id, err).WithCause(err)
+	}
+}
+
+// defaultModelRefNamespaces fills each model ref that has no namespace with
+// the models namespace, where the Models API writes its MaaSModelRef.
+func defaultModelRefNamespaces(spec *aigridv1.SubscriptionSpec, namespace string) {
+	for _, ref := range spec.GetModelRefs() {
+		if ref != nil && ref.GetNamespace() == "" {
+			ref.Namespace = namespace
+		}
 	}
 }
