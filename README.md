@@ -28,7 +28,7 @@ The current API includes:
 - `ai_grid.v1.Subscriptions/List`
 - `ai_grid.v1.Subscriptions/Get` (gRPC/REST join covering AuthPolicies + ModelRegistrations; the Go `client.GetSubscription` helper returns the Subscription object only)
 - `ai_grid.v1.Subscriptions/Create` (managed `MaaSAuthPolicy` `<id>-policy`; returned in response)
-- `ai_grid.v1.Subscriptions/Update` (syncs managed AuthPolicy when present)
+- `ai_grid.v1.Subscriptions/Update` (replaces the masked labels, annotations and spec; overwrites the managed AuthPolicy spec, recreating it when missing)
 - `ai_grid.v1.Subscriptions/Delete` (deletes managed AuthPolicy when present)
 
 REST and Swagger UI are also exposed on HTTP `:8081`:

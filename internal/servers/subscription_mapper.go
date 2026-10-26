@@ -437,22 +437,12 @@ func authPolicyCoversModels(pol *unstructured.Unstructured, modelKeys map[string
 	return false
 }
 
-func authPolicySpecPatch(object *aigridv1.Subscription) map[string]interface{} {
-	policy := authPolicyFromSubscription(object, "")
-	spec, _, _ := unstructured.NestedMap(policy.Object, "spec")
-	return map[string]interface{}{"spec": spec}
-}
-
 func isManagedAuthPolicy(obj *unstructured.Unstructured) bool {
 	if obj == nil {
 		return false
 	}
 	labels := obj.GetLabels()
 	return labels[managedByLabelKey] == managedByLabelValue
-}
-
-func subscriptionSpecPatch(object *aigridv1.Subscription) map[string]interface{} {
-	return map[string]interface{}{"spec": subscriptionSpecMap(object.GetSpec())}
 }
 
 func tokenMetadataFromUnstructured(obj map[string]interface{}) *aigridv1.TokenMetadata {

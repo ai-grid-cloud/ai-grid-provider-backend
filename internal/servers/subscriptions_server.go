@@ -2,7 +2,6 @@ package servers
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"strconv"
@@ -17,7 +16,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 )
 
@@ -237,7 +235,8 @@ func (s *SubscriptionsServer) Create(ctx context.Context, req *aigridv1.Subscrip
 	}, nil
 }
 
-// Update merge-patches the subscription and syncs a managed <id>-policy when present.
+// Update replaces the labels, annotations and spec named by the update mask, then
+// overwrites the managed <id>-policy's spec (recreating it when missing).
 func (s *SubscriptionsServer) Update(ctx context.Context, req *aigridv1.SubscriptionsUpdateRequest) (*aigridv1.SubscriptionsUpdateResponse, error) {
 	object := req.GetObject()
 	if object == nil {
@@ -279,56 +278,36 @@ func (s *SubscriptionsServer) Update(ctx context.Context, req *aigridv1.Subscrip
 		defaultModelRefNamespaces(object.GetSpec(), s.modelNamespace)
 	}
 
-	patchBody := map[string]interface{}{}
-	patchMeta := map[string]interface{}{}
-	if paths.labels {
-		if object.GetMetadata() != nil {
-			patchMeta["labels"] = stringMapToInterfaceMap(object.GetMetadata().GetLabels())
-		} else {
-			patchMeta["labels"] = map[string]interface{}{}
-		}
-	}
-	if paths.annotations {
-		if object.GetMetadata() != nil {
-			patchMeta["annotations"] = stringMapToInterfaceMap(object.GetMetadata().GetAnnotations())
-		} else {
-			patchMeta["annotations"] = map[string]interface{}{}
-		}
-	}
-	if len(patchMeta) > 0 {
-		patchBody["metadata"] = patchMeta
-	}
-	if paths.spec {
-		for k, v := range subscriptionSpecPatch(object) {
-			patchBody[k] = v
-		}
-	}
-	if len(patchBody) == 0 {
+	if !paths.labels && !paths.annotations && !paths.spec {
 		return &aigridv1.SubscriptionsUpdateResponse{Object: subscriptionFromUnstructured(*current)}, nil
 	}
-	if version != 0 {
-		meta, _ := patchBody["metadata"].(map[string]interface{})
-		if meta == nil {
-			meta = map[string]interface{}{}
-			patchBody["metadata"] = meta
-		}
-		meta["resourceVersion"] = strconv.FormatInt(int64(version), 10)
-	}
 
-	patchBytes, err := json.Marshal(patchBody)
-	if err != nil {
-		return nil, connect.Errorf(connect.CodeInternal, "marshal MaaSSubscription patch: %v", err).WithCause(err)
+	// Replace, not merge: what the mask names is written whole, so removed
+	// labels and cleared optional spec fields are removed from the CR.
+	next := current.DeepCopy()
+	if paths.labels {
+		next.SetLabels(object.GetMetadata().GetLabels())
 	}
-	updated, err := s.client.Resource(maasSubscriptionsResource).Namespace(s.namespace).Patch(
-		ctx, id, types.MergePatchType, patchBytes, metav1.PatchOptions{},
-	)
+	if paths.annotations {
+		next.SetAnnotations(object.GetMetadata().GetAnnotations())
+	}
+	if paths.spec {
+		next.Object["spec"] = subscriptionSpecMap(object.GetSpec())
+	}
+	updated, err := s.client.Resource(maasSubscriptionsResource).Namespace(s.namespace).Update(ctx, next, metav1.UpdateOptions{})
 	if err != nil {
 		return nil, mapSubscriptionAPIError("update", id, err)
 	}
 
 	if paths.spec {
 		if err := s.syncManagedAuthPolicy(ctx, object); err != nil {
-			return nil, err
+			code := connect.CodeInternal
+			var ce *connect.Error
+			if errors.As(err, &ce) {
+				code = ce.Code()
+			}
+			return nil, connect.Errorf(code, "subscription %q was updated, but its auth policy %q was not: %v",
+				id, authPolicyNameForSubscription(id), err).WithCause(err)
 		}
 	}
 
@@ -417,12 +396,20 @@ func (s *SubscriptionsServer) coveringAuthPolicies(ctx context.Context, sub *aig
 	return out, nil
 }
 
+// syncManagedAuthPolicy overwrites the managed <id>-policy's spec from the
+// subscription, recreating the policy when it is missing. A policy of that
+// name that this service doesn't manage is left alone.
 func (s *SubscriptionsServer) syncManagedAuthPolicy(ctx context.Context, object *aigridv1.Subscription) error {
 	id := subscriptionID(object)
 	policyName := authPolicyNameForSubscription(id)
-	existing, err := s.client.Resource(maasAuthPoliciesResource).Namespace(s.namespace).Get(ctx, policyName, metav1.GetOptions{})
+	policies := s.client.Resource(maasAuthPoliciesResource).Namespace(s.namespace)
+	desired := authPolicyFromSubscription(object, s.namespace)
+	existing, err := policies.Get(ctx, policyName, metav1.GetOptions{})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
+			if _, err := policies.Create(ctx, desired, metav1.CreateOptions{}); err != nil {
+				return mapSubscriptionAPIError("create auth policy", id, err)
+			}
 			return nil
 		}
 		return mapSubscriptionAPIError("get auth policy", id, err)
@@ -430,13 +417,8 @@ func (s *SubscriptionsServer) syncManagedAuthPolicy(ctx context.Context, object 
 	if !isManagedAuthPolicy(existing) {
 		return nil
 	}
-	patchBytes, err := json.Marshal(authPolicySpecPatch(object))
-	if err != nil {
-		return connect.Errorf(connect.CodeInternal, "marshal MaaSAuthPolicy patch: %v", err).WithCause(err)
-	}
-	if _, err := s.client.Resource(maasAuthPoliciesResource).Namespace(s.namespace).Patch(
-		ctx, policyName, types.MergePatchType, patchBytes, metav1.PatchOptions{},
-	); err != nil {
+	existing.Object["spec"] = desired.Object["spec"]
+	if _, err := policies.Update(ctx, existing, metav1.UpdateOptions{}); err != nil {
 		return mapSubscriptionAPIError("update auth policy", id, err)
 	}
 	return nil

@@ -8,6 +8,7 @@ import (
 
 	connect "connectrpc.com/connect/v2"
 	aigridv1 "github.com/osac-project/ai-grid-provider-backend/gen/ai_grid/v1"
+	"google.golang.org/protobuf/types/known/fieldmaskpb"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -455,7 +456,7 @@ func TestSubscriptionsUnlimitedCreate(t *testing.T) {
 	}
 }
 
-func TestSubscriptionsUpdateSkipsMissingManagedPolicy(t *testing.T) {
+func TestSubscriptionsUpdateRecreatesMissingManagedPolicy(t *testing.T) {
 	t.Parallel()
 
 	client := newSubscriptionClient(subscriptionUnstructured("orphan", "models-as-a-service"))
@@ -465,6 +466,102 @@ func TestSubscriptionsUpdateSkipsMissingManagedPolicy(t *testing.T) {
 	obj.Spec.Priority = 5
 	if _, err := srv.Update(context.Background(), &aigridv1.SubscriptionsUpdateRequest{Object: obj}); err != nil {
 		t.Fatalf("Update() error = %v", err)
+	}
+	policy, err := client.Resource(testAuthPoliciesGVR).Namespace("models-as-a-service").Get(context.Background(), "orphan-policy", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("managed policy not recreated: %v", err)
+	}
+	if !isManagedAuthPolicy(policy) {
+		t.Fatalf("recreated policy labels = %v", policy.GetLabels())
+	}
+	// The policy's subjects are the subscription's owner groups, as stored.
+	sub, err := client.Resource(testSubscriptionsGVR).Namespace("models-as-a-service").Get(context.Background(), "orphan", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get subscription: %v", err)
+	}
+	owners, _, _ := unstructured.NestedSlice(sub.Object, "spec", "owner", "groups")
+	groups, _, _ := unstructured.NestedSlice(policy.Object, "spec", "subjects", "groups")
+	if len(groups) != 1 || len(owners) != 1 || groups[0].(map[string]interface{})["name"] != owners[0].(map[string]interface{})["name"] {
+		t.Fatalf("recreated policy groups = %v, want the subscription's owner groups %v", groups, owners)
+	}
+}
+
+func TestSubscriptionsUpdateClearsInferencePriorityAndLabel(t *testing.T) {
+	t.Parallel()
+
+	client := newSubscriptionClient()
+	srv := mustSubscriptionsServer(t, client)
+	ctx := context.Background()
+
+	obj := sampleSubscription("clear-me")
+	obj.Metadata.Labels = map[string]string{"tier": "gold"}
+	prio := int32(3)
+	obj.Spec.InferencePriority = &prio
+	obj.Spec.TokenMetadata = &aigridv1.TokenMetadata{CostCenter: "cc-1"}
+	obj.Spec.Guardrails = []*aigridv1.GuardrailAttachment{{RefName: "pii"}}
+	if _, err := srv.Create(ctx, &aigridv1.SubscriptionsCreateRequest{Object: obj}); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	// A field the provider API doesn't own; overwriting the managed policy removes it.
+	policy, err := client.Resource(testAuthPoliciesGVR).Namespace("models-as-a-service").Get(ctx, "clear-me-policy", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get policy: %v", err)
+	}
+	if err := unstructured.SetNestedField(policy.Object, "stray", "spec", "extra"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Resource(testAuthPoliciesGVR).Namespace("models-as-a-service").Update(ctx, policy, metav1.UpdateOptions{}); err != nil {
+		t.Fatalf("seed stray policy field: %v", err)
+	}
+
+	cleared := sampleSubscription("clear-me")
+	cleared.Metadata.Labels = map[string]string{}
+	if _, err := srv.Update(ctx, &aigridv1.SubscriptionsUpdateRequest{
+		Object:     cleared,
+		UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"metadata.labels", "spec"}},
+	}); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+
+	sub, err := client.Resource(testSubscriptionsGVR).Namespace("models-as-a-service").Get(ctx, "clear-me", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get subscription: %v", err)
+	}
+	if _, ok := sub.GetLabels()["tier"]; ok {
+		t.Fatalf("label not cleared: %v", sub.GetLabels())
+	}
+	for _, field := range []string{"inferencePriority", "tokenMetadata", "guardrails"} {
+		if _, found, _ := unstructured.NestedFieldNoCopy(sub.Object, "spec", field); found {
+			t.Fatalf("spec.%s not cleared: %v", field, sub.Object["spec"])
+		}
+	}
+	policy, err = client.Resource(testAuthPoliciesGVR).Namespace("models-as-a-service").Get(ctx, "clear-me-policy", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get policy after update: %v", err)
+	}
+	if _, found, _ := unstructured.NestedFieldNoCopy(policy.Object, "spec", "extra"); found {
+		t.Fatalf("managed policy spec merged, not overwritten: %v", policy.Object["spec"])
+	}
+}
+
+func TestSubscriptionsUpdateNamesPartialFailure(t *testing.T) {
+	t.Parallel()
+
+	client := newSubscriptionClient()
+	srv := mustSubscriptionsServer(t, client)
+	ctx := context.Background()
+	if _, err := srv.Create(ctx, &aigridv1.SubscriptionsCreateRequest{Object: sampleSubscription("half")}); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	client.PrependReactor("update", "maasauthpolicies", func(clienttesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewInternalError(fmt.Errorf("policy boom"))
+	})
+	obj := sampleSubscription("half")
+	obj.Spec.Priority = 30
+	_, err := srv.Update(ctx, &aigridv1.SubscriptionsUpdateRequest{Object: obj})
+	assertConnectCode(t, err, connect.CodeInternal)
+	if !strings.Contains(err.Error(), `subscription "half" was updated`) || !strings.Contains(err.Error(), `"half-policy"`) {
+		t.Fatalf("error doesn't name the partial failure: %v", err)
 	}
 }
 
