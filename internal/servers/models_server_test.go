@@ -6,6 +6,7 @@ import (
 
 	connect "connectrpc.com/connect/v2"
 	aigridv1 "github.com/osac-project/ai-grid-provider-backend/gen/ai_grid/v1"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -261,6 +262,41 @@ func TestModelsUpdateStaleVersion(t *testing.T) {
 		Lock:       true,
 	})
 	assertConnectCode(t, err, connect.CodeAborted)
+}
+
+// An update changes only the parts of spec.main its mask names.
+func TestModelsUpdateMainByMask(t *testing.T) {
+	t.Parallel()
+	srv := mustModelsServer(t, newModelsClient())
+	ctx := context.Background()
+	model := sampleModel("masked")
+	model.Spec.Main.Env = []*aigridv1.ModelEnvVar{{Name: "A", Value: "1"}}
+	if _, err := srv.Create(ctx, &aigridv1.ModelsCreateRequest{Object: model}); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	update := func(paths []string, spec *aigridv1.ModelSpec) *aigridv1.Model {
+		t.Helper()
+		got, err := srv.Update(ctx, &aigridv1.ModelsUpdateRequest{
+			Object:     &aigridv1.Model{Id: "masked", Spec: spec},
+			UpdateMask: &fieldmaskpb.FieldMask{Paths: paths},
+		})
+		if err != nil {
+			t.Fatalf("Update(%v) error = %v", paths, err)
+		}
+		return got.GetObject()
+	}
+
+	// A client that always sends an empty container doesn't clear the image.
+	got := update([]string{"spec.replicas"}, &aigridv1.ModelSpec{Replicas: proto.Int32(2), Main: &aigridv1.ModelContainer{}})
+	if got.GetSpec().GetMain().GetImage() != "quay.io/example/vllm:latest" || len(got.GetSpec().GetMain().GetEnv()) != 1 || got.GetSpec().GetReplicas() != 2 {
+		t.Fatalf("spec.replicas update: main = %v, replicas = %d", got.GetSpec().GetMain(), got.GetSpec().GetReplicas())
+	}
+
+	// spec.main.env with no variables removes them and keeps the image.
+	got = update([]string{"spec.main.env"}, &aigridv1.ModelSpec{Main: &aigridv1.ModelContainer{}})
+	if got.GetSpec().GetMain().GetImage() != "quay.io/example/vllm:latest" || len(got.GetSpec().GetMain().GetEnv()) != 0 {
+		t.Fatalf("spec.main.env update: main = %v", got.GetSpec().GetMain())
+	}
 }
 
 func TestModelsUpdateLockRequiresVersion(t *testing.T) {

@@ -551,6 +551,8 @@ func (s *ModelsServer) ensureNotReferenced(ctx context.Context, id string) error
 
 type modelUpdatePaths struct {
 	labels, annotations, llmSpec, placement, rollout bool
+	// The parts of spec.main the mask names. spec.main names all three.
+	mainImage, mainEnv, mainResources bool
 }
 
 func parseModelUpdateMask(mask *fieldmaskpb.FieldMask) (modelUpdatePaths, error) {
@@ -565,8 +567,12 @@ func parseModelUpdateMask(mask *fieldmaskpb.FieldMask) (modelUpdatePaths, error)
 			paths.labels = true
 		case p == "metadata.annotations" || strings.HasPrefix(p, "metadata.annotations."):
 			paths.annotations = true
+		case p == "spec.main" || strings.HasPrefix(p, "spec.main."):
+			paths.llmSpec = true
+			paths.mainImage = paths.mainImage || p == "spec.main" || p == "spec.main.image"
+			paths.mainEnv = paths.mainEnv || p == "spec.main" || p == "spec.main.env"
+			paths.mainResources = paths.mainResources || (p != "spec.main.image" && p != "spec.main.env")
 		case p == "spec.replicas",
-			p == "spec.main", p == "spec.main.image", p == "spec.main.env", strings.HasPrefix(p, "spec.main."),
 			p == "spec.model", strings.HasPrefix(p, "spec.model."),
 			p == "spec.base_refs", p == "spec.runtime",
 			p == "spec.router", strings.HasPrefix(p, "spec.router."),
@@ -611,22 +617,29 @@ func mergeModelUpdate(current, incoming *aigridv1.Model, paths modelUpdatePaths)
 	}
 	in := incoming.GetSpec()
 	if paths.llmSpec {
-		if in.GetMain() != nil {
+		// Only the parts of spec.main the mask names change: a mask of
+		// spec.replicas alone keeps the image, and spec.main.env replaces the
+		// variables even with an empty list (which arrives as nil on the wire).
+		if paths.mainImage || paths.mainEnv || paths.mainResources {
 			main := out.Spec.GetMain()
 			if main == nil {
 				main = &aigridv1.ModelContainer{}
 			} else {
 				main = proto.Clone(main).(*aigridv1.ModelContainer)
 			}
-			main.Image = in.GetMain().GetImage()
-			if in.GetMain().Env != nil {
+			if paths.mainImage {
+				main.Image = in.GetMain().GetImage()
+			}
+			if paths.mainEnv {
 				main.Env = in.GetMain().GetEnv()
 			}
-			if len(in.GetMain().GetRequests()) > 0 {
-				main.Requests = in.GetMain().GetRequests()
-			}
-			if len(in.GetMain().GetLimits()) > 0 {
-				main.Limits = in.GetMain().GetLimits()
+			if paths.mainResources {
+				if len(in.GetMain().GetRequests()) > 0 {
+					main.Requests = in.GetMain().GetRequests()
+				}
+				if len(in.GetMain().GetLimits()) > 0 {
+					main.Limits = in.GetMain().GetLimits()
+				}
 			}
 			out.Spec.Main = main
 		}
