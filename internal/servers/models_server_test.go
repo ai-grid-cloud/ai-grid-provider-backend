@@ -371,6 +371,157 @@ func TestModelsUpdateLockRequiresVersion(t *testing.T) {
 	assertConnectCode(t, err, connect.CodeInvalidArgument)
 }
 
+// The fake dynamic client applies real RFC 7386 merge patches, so these tests
+// see what the API server would: a key left out of a merge patch is kept.
+func TestModelsUpdateReplicasToScalingClearsReplicas(t *testing.T) {
+	t.Parallel()
+	client := newModelsClient()
+	srv := mustModelsServer(t, client)
+	ctx := context.Background()
+	if _, err := srv.Create(ctx, &aigridv1.ModelsCreateRequest{Object: sampleModel("to-scaling")}); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	obj := sampleModel("to-scaling")
+	obj.Spec.Replicas = nil
+	obj.Spec.Scaling = &aigridv1.ModelScaling{
+		MinReplicas: 1,
+		MaxReplicas: 3,
+		Keda:        true,
+		Triggers:    []*aigridv1.ModelKedaTrigger{{Type: "cpu", Metadata: map[string]string{"value": "70"}}},
+	}
+	if _, err := srv.Update(ctx, &aigridv1.ModelsUpdateRequest{
+		Object:     obj,
+		UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"spec.replicas", "spec.scaling"}},
+	}); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+	llm, err := client.Resource(testLLMGVR).Namespace("ai-grid-internal-models").Get(ctx, "to-scaling", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get LLMInferenceService: %v", err)
+	}
+	if v, found, _ := unstructured.NestedFieldNoCopy(llm.Object, "spec", "replicas"); found {
+		t.Fatalf("spec.replicas = %v beside spec.scaling, want it removed", v)
+	}
+	if _, found, _ := unstructured.NestedMap(llm.Object, "spec", "scaling"); !found {
+		t.Fatal("spec.scaling missing after Update")
+	}
+}
+
+func TestModelsUpdateRemovesLabelsAndAnnotations(t *testing.T) {
+	t.Parallel()
+	client := newModelsClient()
+	srv := mustModelsServer(t, client)
+	ctx := context.Background()
+	obj := sampleModel("relabel")
+	obj.Metadata.Labels = map[string]string{"team": "a"}
+	obj.Metadata.Annotations["example.com/note"] = "x"
+	if _, err := srv.Create(ctx, &aigridv1.ModelsCreateRequest{Object: obj}); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	update := sampleModel("relabel")
+	update.Metadata.Labels = map[string]string{}
+	if _, err := srv.Update(ctx, &aigridv1.ModelsUpdateRequest{
+		Object:     update,
+		UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"metadata.labels", "metadata.annotations"}},
+	}); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+	llm, err := client.Resource(testLLMGVR).Namespace("ai-grid-internal-models").Get(ctx, "relabel", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get LLMInferenceService: %v", err)
+	}
+	labels := llm.GetLabels()
+	if _, ok := labels["team"]; ok {
+		t.Fatalf("labels = %v, want team removed", labels)
+	}
+	if labels[modelLabelKey] != "relabel" || labels[managedByLabelKey] != managedByLabelValue {
+		t.Fatalf("labels = %v, want the managed labels kept", labels)
+	}
+	anns := llm.GetAnnotations()
+	if _, ok := anns["example.com/note"]; ok {
+		t.Fatalf("annotations = %v, want example.com/note removed", anns)
+	}
+	if anns["openshift.io/display-name"] != "relabel" {
+		t.Fatalf("annotations = %v, want display name kept", anns)
+	}
+}
+
+func TestModelsUpdatePlacementRemovesNumberOfClusters(t *testing.T) {
+	t.Parallel()
+	client := newModelsClient()
+	srv := mustModelsServer(t, client)
+	ctx := context.Background()
+	two := int32(2)
+	obj := sampleModel("unpin")
+	obj.Spec.Placement = &aigridv1.ModelPlacement{NumberOfClusters: &two}
+	if _, err := srv.Create(ctx, &aigridv1.ModelsCreateRequest{Object: obj}); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	update := sampleModel("unpin")
+	update.Spec.Placement = &aigridv1.ModelPlacement{}
+	if _, err := srv.Update(ctx, &aigridv1.ModelsUpdateRequest{
+		Object:     update,
+		UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"spec.placement"}},
+	}); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+	placement, err := client.Resource(testPlacementGVR).Namespace("ai-grid-internal-models").Get(ctx, "model-unpin", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get Placement: %v", err)
+	}
+	if v, found, _ := unstructured.NestedFieldNoCopy(placement.Object, "spec", "numberOfClusters"); found {
+		t.Fatalf("Placement spec.numberOfClusters = %v, want it removed", v)
+	}
+}
+
+func TestModelsUpdateKeepsSpecKeysTheAPIDoesNotOwn(t *testing.T) {
+	t.Parallel()
+	client := newModelsClient()
+	srv := mustModelsServer(t, client)
+	ctx := context.Background()
+	if _, err := srv.Create(ctx, &aigridv1.ModelsCreateRequest{Object: sampleModel("hardened")}); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	llms := client.Resource(testLLMGVR).Namespace("ai-grid-internal-models")
+	llm, err := llms.Get(ctx, "hardened", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get LLMInferenceService: %v", err)
+	}
+	// Set out of band, as an operator hardening the deployment might.
+	if err := unstructured.SetNestedField(llm.Object, map[string]interface{}{"runAsNonRoot": true}, "spec", "template", "securityContext"); err != nil {
+		t.Fatal(err)
+	}
+	if err := unstructured.SetNestedField(llm.Object, map[string]interface{}{"replicas": int64(1)}, "spec", "worker"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := llms.Update(ctx, llm, metav1.UpdateOptions{}); err != nil {
+		t.Fatalf("seed out-of-band keys: %v", err)
+	}
+
+	obj := sampleModel("hardened")
+	replicas := int32(2)
+	obj.Spec.Replicas = &replicas
+	if _, err := srv.Update(ctx, &aigridv1.ModelsUpdateRequest{
+		Object:     obj,
+		UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"spec.replicas"}},
+	}); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+	llm, err = llms.Get(ctx, "hardened", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get LLMInferenceService: %v", err)
+	}
+	if _, found, _ := unstructured.NestedMap(llm.Object, "spec", "template", "securityContext"); !found {
+		t.Fatal("spec.template.securityContext removed by Update, want it kept")
+	}
+	if _, found, _ := unstructured.NestedMap(llm.Object, "spec", "worker"); !found {
+		t.Fatal("spec.worker removed by Update, want it kept")
+	}
+	if got, _, _ := unstructured.NestedInt64(llm.Object, "spec", "replicas"); got != 2 {
+		t.Fatalf("spec.replicas = %d, want 2", got)
+	}
+}
+
 func TestModelsDeleteGuardedByAuthPolicy(t *testing.T) {
 	t.Parallel()
 	pol := &unstructured.Unstructured{Object: map[string]interface{}{

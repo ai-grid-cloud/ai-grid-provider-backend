@@ -292,6 +292,7 @@ func (s *ModelsServer) Update(ctx context.Context, req *aigridv1.ModelsUpdateReq
 				modelLabelKey: id, managedByLabelKey: managedByLabelValue,
 			})
 		}
+		patchMeta["labels"] = mergePatchReplacing(patchMeta["labels"].(map[string]interface{}), stringMapToInterfaceMap(current.GetLabels()))
 	}
 	if paths.annotations {
 		if object.GetMetadata() != nil {
@@ -299,12 +300,14 @@ func (s *ModelsServer) Update(ctx context.Context, req *aigridv1.ModelsUpdateReq
 		} else {
 			patchMeta["annotations"] = map[string]interface{}{}
 		}
+		patchMeta["annotations"] = mergePatchReplacing(patchMeta["annotations"].(map[string]interface{}), stringMapToInterfaceMap(current.GetAnnotations()))
 	}
 	if len(patchMeta) > 0 {
 		patchBody["metadata"] = patchMeta
 	}
 	if paths.llmSpec {
-		patchBody["spec"] = modelSpecToLLMMap(merged.GetSpec(), id)
+		currentSpec, _, _ := unstructured.NestedMap(current.Object, "spec")
+		patchBody["spec"] = mergePatchOwned(modelSpecToLLMMap(merged.GetSpec(), id), currentSpec, llmSpecOwnedKeys)
 	}
 	if version != 0 {
 		meta, _ := patchBody["metadata"].(map[string]interface{})
@@ -458,13 +461,13 @@ func (s *ModelsServer) syncPlacementSideEffects(ctx context.Context, model *aigr
 		return mapModelAPIError("get Placement", id, err)
 	} else {
 		spec, _, _ := unstructured.NestedMap(placement.Object, "spec")
-		patch, _ := json.Marshal(map[string]interface{}{"spec": spec})
+		currentSpec, _, _ := unstructured.NestedMap(existingPlacement.Object, "spec")
+		patch, _ := json.Marshal(map[string]interface{}{"spec": mergePatchOwned(spec, currentSpec, placementSpecOwnedKeys)})
 		if _, err := s.client.Resource(placementsResource).Namespace(s.namespace).Patch(
 			ctx, pname, types.MergePatchType, patch, metav1.PatchOptions{},
 		); err != nil {
 			return mapModelAPIError("update Placement", id, err)
 		}
-		_ = existingPlacement
 	}
 
 	mwrs := mwrsFromModel(model, s.namespace, deployment)
@@ -489,6 +492,63 @@ func (s *ModelsServer) syncPlacementSideEffects(ctx context.Context, model *aigr
 		_ = existingMWRS
 	}
 	return nil
+}
+
+// ownedKeys lists the keys of an object that this API writes, as a tree. A
+// nil subtree means the API owns the whole value under that key; an empty one
+// means it owns the key but not the keys inside it.
+type ownedKeys map[string]ownedKeys
+
+// llmSpecOwnedKeys are the LLMInferenceService spec keys modelSpecToLLMMap
+// writes. Other keys, such as spec.worker or spec.template.securityContext,
+// may be set out of band and are kept.
+var llmSpecOwnedKeys = ownedKeys{
+	"model":    {"uri": nil, "name": nil},
+	"replicas": nil,
+	"baseRefs": nil,
+	"runtime":  nil,
+	"router":   {"route": {}, "scheduler": {}, "gateway": {"refs": nil}},
+	"scaling":  {"minReplicas": nil, "maxReplicas": nil, "keda": {"triggers": nil}},
+	"template": {"containers": nil},
+}
+
+// placementSpecOwnedKeys are the Placement spec keys placementFromModel writes.
+var placementSpecOwnedKeys = ownedKeys{"predicates": nil, "clusterSets": nil, "numberOfClusters": nil}
+
+// mergePatchReplacing returns a JSON merge patch (RFC 7386) that turns current
+// into desired: every key of current that desired lacks is removed.
+func mergePatchReplacing(desired, current map[string]interface{}) map[string]interface{} {
+	return mergePatchOwned(desired, current, nil)
+}
+
+// mergePatchOwned returns a JSON merge patch (RFC 7386) that writes desired
+// over current. A merge patch keeps every key it leaves out, so each owned key
+// of current that desired lacks is sent as null, which removes it; keys the
+// API doesn't own are left out and kept. A nil owned means every key is owned.
+// Nested objects are compared the same way; lists and scalars are replaced whole.
+func mergePatchOwned(desired, current map[string]interface{}, owned ownedKeys) map[string]interface{} {
+	out := make(map[string]interface{}, len(desired)+len(current))
+	for k, v := range desired {
+		if dm, ok := v.(map[string]interface{}); ok {
+			if cm, ok := current[k].(map[string]interface{}); ok {
+				sub, listed := owned[k]
+				if owned != nil && !listed {
+					sub = ownedKeys{}
+				}
+				v = mergePatchOwned(dm, cm, sub)
+			}
+		}
+		out[k] = v
+	}
+	for k := range current {
+		if _, ok := desired[k]; ok {
+			continue
+		}
+		if _, listed := owned[k]; owned == nil || listed {
+			out[k] = nil
+		}
+	}
+	return out
 }
 
 func (s *ModelsServer) syncModelRefAnnotations(ctx context.Context, id string, model *aigridv1.Model) error {
