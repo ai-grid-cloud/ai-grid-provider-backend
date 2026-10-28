@@ -206,9 +206,10 @@ func (x *SubscriptionSpec) GetGuardrails() []*GuardrailAttachment {
 // SubscriptionOrganization identifies the organization that administers a subscription.
 type SubscriptionOrganization struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Organization identifier: the Tenant's id. Required, and an RFC 1123 DNS
-	// label, because the backend qualifies owner groups as <id>/<group>;
-	// immutable once set.
+	// Organization identifier. Non-empty; immutable once set.
+	// Must match the shared-OIDC claim
+	// https://redhat.com/maas/orgs[].organization_id (e.g. a Keycloak
+	// Organization UUID). Git mode qualifies owner.groups as "{id}/{group}".
 	Id            string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -254,7 +255,9 @@ func (x *SubscriptionOrganization) GetId() string {
 // SubscriptionOwner names the groups and users that own the entitlement.
 type SubscriptionOwner struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// IdP / Kubernetes group names.
+	// Bare IdP group names (e.g. "ai-grid-users"). Git mode stores them as
+	// "{organization.id}/{group}" to match the OIDC groups claim; reads return
+	// the bare names.
 	Groups []string `protobuf:"bytes,1,rep,name=groups,proto3" json:"groups,omitempty"`
 	// User names (for example service accounts).
 	Users         []string `protobuf:"bytes,2,rep,name=users,proto3" json:"users,omitempty"`

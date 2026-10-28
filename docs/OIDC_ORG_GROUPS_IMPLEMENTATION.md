@@ -144,36 +144,26 @@ Flow: user logs into tenant IdP → `saas` brokers that IdP → `saas` issues th
 
 ---
 
-### B. This backend (provider API / catalog) — do now
+### B. This backend — token shape (GitOps org create deferred)
 
-**B1. Match token org id on subscriptions (unblocked)**
+**Already correct in code**
 
-- [ ] Document that `Subscription.spec.organization.id` **must** equal token `https://redhat.com/maas/orgs[].organization_id` (e.g. alice’s `42c3e46f-…`).
-- [ ] Confirm `qualifiedOwnerGroups` + tests for UUID orgs + bare groups → file `org/group`.
-- [ ] Optional fixture aligned with alice.
+- `qualifiedOwnerGroups` writes `{organization.id}/{group}` into the subscription and managed AuthPolicy.
+- API accepts bare groups (or same-org-qualified); reads return bare names.
+- Org id must be a DNS label; Keycloak org UUIDs (e.g. `42c3e46f-2477-44d7-a85b-d3b43f6b31fa`) pass.
+- `TestSubscriptionsGitOwnerGroups` + `TestSubscriptionsGitOwnerGroupsADRShape` cover this.
 
-**B2. Docs**
+**Done / keep aligned**
 
-- [ ] README / UI_API_REFERENCE: bare groups in API; `org/group` on wire; link ADR + this brief.
-- [ ] Correct any “tokens don’t have org yet” language — Lindani: they should / his setup does.
+- [x] Docs: `docs/UI_API_REFERENCE.md` states required `organization.id` = token `maas/orgs[].organization_id`, bare groups in API, `org/group` on disk.
+- [x] Comment on `qualifiedOwnerGroups` cites ADR token shape.
+- [ ] Console: pick org id from the tenant UUID that matches the token; send bare group names (console repo).
 
-**B3. Tenants / org create (plan, don’t big-bang without Monday)**
+**Deferred (ignore for this pass)**
 
-- [ ] Keep current Keycloak Admin create working for MVP demos if needed.
-- [ ] Spike/design GitOps org create with Lindani (what YAML, who reconciles, how id is allocated so subscriptions can reference it).
-- [ ] Do **not** assume `apps/keycloak` realm import is the production write path.
+- Tenants → GitOps org create (Lindani prefers it; not required to match tokens).
 
-**B4. Console**
-
-- [ ] Subscription UX: org id from tenant/org that matches token claim; bare group names.
-
-**B5. Non-goals**
-
-- No JWT validation in this service.
-- No treating demo Keycloak GitOps as production org lifecycle without a design.
-- No org-global rate-limit field.
-
-**Exit (near-term):** Subscription with alice’s org id + `ai-grid-users` → AuthPolicy `42c3e46f-…/ai-grid-users`. Org GitOps is a follow-up design, not a blocker for matching.
+**Exit:** Creating a subscription with alice’s org id + `ai-grid-users` writes AuthPolicy subjects `42c3e46f-…/ai-grid-users` — matches his JWT `groups` claim.
 
 ---
 

@@ -2287,7 +2287,7 @@
           "items": {
             "type": "string"
           },
-          "description": "IdP / Kubernetes group names."
+          "description": "Bare IdP group names (e.g. \"ai-grid-users\"). Git mode stores them as\n\"{organization.id}/{group}\" to match the OIDC groups claim; reads return\nthe bare names."
         },
         "users": {
           "type": "array",

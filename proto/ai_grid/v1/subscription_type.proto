@@ -70,7 +70,9 @@ message SubscriptionOrganization {
 
 // SubscriptionOwner names the groups and users that own the entitlement.
 message SubscriptionOwner {
-  // IdP / Kubernetes group names.
+  // Bare IdP group names (e.g. "ai-grid-users"). Git mode stores them as
+  // "{organization.id}/{group}" to match the OIDC groups claim; reads return
+  // the bare names.
   repeated string groups = 1;
 
   // User names (for example service accounts).
