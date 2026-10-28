@@ -593,14 +593,19 @@ which Argo CD delivers to the ingress clusters in
 `AI_GRID_SUBSCRIPTION_NAMESPACE` (default `models-as-a-service`).
 OSAC shape: `id` + `metadata` + `spec` + `status`. `id` equals `metadata.name`.
 
-`spec.organization.id` is required. `spec.owner.groups` take bare group names
-(a group already prefixed with the same organization is accepted; another
-organization's prefix is `InvalidArgument`); the file holds
-`<organization>/<group>`, and reads return the bare names. A model ref without
-a namespace gets the subscription namespace, and a ref in that namespace must
-name an existing model (`FailedPrecondition` otherwise). Labels and annotations take only
-unprefixed keys plus `openshift.io/display-name` and
-`openshift.io/description`.
+`spec.organization.id` is **required**. It must equal the organization's id in
+the shared-OIDC token claim `https://redhat.com/maas/orgs[].organization_id`
+([ODH-ADR-MS-0007](https://github.com/opendatahub-io/architecture-decision-records/blob/main/architecture-decision-records/model-serving/ODH-ADR-MS-0007-ai-grid-shared-oidc-identity-contract.md)),
+for example the Keycloak demo org `42c3e46f-2477-44d7-a85b-d3b43f6b31fa`.
+`spec.owner.groups` take **bare** group names as in the token after the org
+prefix (e.g. `ai-grid-users`, `ai-grid-admins`). A group already prefixed with
+the same organization is accepted; another organization's prefix is
+`InvalidArgument`. The catalog file and managed AuthPolicy hold
+`<organization.id>/<group>` so they match the token `groups` claim; reads
+return the bare names. A model ref without a namespace gets the subscription
+namespace, and a ref in that namespace must name an existing model
+(`FailedPrecondition` otherwise). Labels and annotations take only unprefixed
+keys plus `openshift.io/display-name` and `openshift.io/description`.
 
 **AuthPolicy pairing (server side-effect):** the same file holds a managed
 `MaaSAuthPolicy` named `<id>-policy` (subjects from `owner`, model refs
@@ -653,11 +658,11 @@ Subscription ids must leave room for the `-policy` suffix (max 56 chars).
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `owner.groups` | string[] | IdP / Kubernetes group names |
+| `owner.groups` | string[] | Bare IdP group names (e.g. `ai-grid-users`); catalog stores `{organization.id}/{group}` |
 | `owner.users` | string[] | Optional user names |
 | `model_refs[]` | object | See below |
 | `priority` | int32 | Relative priority among subscriptions |
-| `organization.id` | string | Optional; set once, then immutable |
+| `organization.id` | string | **Required**; immutable once set; must match token `maas/orgs[].organization_id` |
 | `token_metadata` | object | `organization_id`, `cost_center`, `labels` |
 | `inference_priority` | int32 (optional) | Inference scheduling priority |
 | `guardrails[]` | object | `{ ref_name, checks[] }` |
@@ -691,8 +696,8 @@ curl -sS -X POST 'http://localhost:8081/api/v1/subscriptions' \
     "id": "free-subscription",
     "metadata": {"name": "free-subscription"},
     "spec": {
-      "owner": {"groups": ["system:authenticated"]},
-      "organization": {"id": "org-uuid"},
+      "owner": {"groups": ["ai-grid-users"]},
+      "organization": {"id": "42c3e46f-2477-44d7-a85b-d3b43f6b31fa"},
       "model_refs": [{
         "name": "facebook-opt-125m-simulated",
         "token_rate_limits": [{"limit": "100", "window": "1m"}]

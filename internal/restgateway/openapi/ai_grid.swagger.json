@@ -2125,7 +2125,7 @@
       "properties": {
         "id": {
           "type": "string",
-          "description": "Organization identifier. Non-empty; immutable once set."
+          "description": "Organization identifier. Non-empty; immutable once set.\nMust match the shared-OIDC claim\nhttps://redhat.com/maas/orgs[].organization_id (e.g. a Keycloak\nOrganization UUID). Git mode qualifies owner.groups as \"{id}/{group}\"."
         }
       },
       "description": "SubscriptionOrganization identifies the organization that administers a subscription."
@@ -2138,7 +2138,7 @@
           "items": {
             "type": "string"
           },
-          "description": "IdP / Kubernetes group names."
+          "description": "Bare IdP group names (e.g. \"ai-grid-users\"). Git mode stores them as\n\"{organization.id}/{group}\" to match the OIDC groups claim; reads return\nthe bare names."
         },
         "users": {
           "type": "array",

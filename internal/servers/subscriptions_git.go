@@ -357,9 +357,12 @@ func validateGitMetadata(meta *aigridv1.Metadata) error {
 }
 
 // qualifiedOwnerGroups returns the owner groups as the file holds them,
-// <organization id>/<group>: the tenant-qualified form the gateway puts in
-// the token. spec.organization.id is required, and must be a DNS label so it
-// can't hold a separator that changes which group is granted. A group may be
+// <organization id>/<group>. That is the shared-OIDC token shape
+// (ODH-ADR-MS-0007): groups in the JWT and AuthPolicy subjects must match
+// https://redhat.com/maas/orgs[].organization_id plus "/" plus the bare
+// group name. spec.organization.id is required and must be a DNS label so
+// it can't hold "/" and change which group is granted (Keycloak org UUIDs
+// such as 42c3e46f-2477-44d7-a85b-d3b43f6b31fa qualify). A group may be
 // sent bare or already qualified with the same organization; a group
 // qualified with another organization, or empty, is InvalidArgument.
 // Surrounding spaces are trimmed, and repeats are dropped, keeping the first.
