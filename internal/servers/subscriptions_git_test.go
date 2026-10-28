@@ -241,30 +241,53 @@ func TestSubscriptionsGitOwnerGroups(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			ctx := context.Background()
-			writer := gitops.NewMemoryWriter(gitModelSeed("sim-model"))
-			srv := mustGitSubscriptionsServer(t, writer)
-			object := gitSampleSubscription("team-a")
-			object.Spec.Owner.Groups = tc.groups
-			created, err := srv.Create(ctx, &aigridv1.SubscriptionsCreateRequest{Object: object})
-			if tc.wantCode != 0 {
-				assertConnectCode(t, err, tc.wantCode)
-				return
-			}
-			if err != nil {
-				t.Fatalf("Create() error = %v", err)
-			}
-			if got := created.GetObject().GetSpec().GetOwner().GetGroups(); !slices.Equal(got, tc.wantAPI) {
-				t.Fatalf("Create owner.groups = %v, want %v", got, tc.wantAPI)
-			}
-			sub, policy := readGitSubscriptionFile(t, writer, "team-a")
-			if got := groupNames(t, sub, "spec", "owner", "groups"); !slices.Equal(got, tc.wantFile) {
-				t.Fatalf("file owner.groups = %v, want %v", got, tc.wantFile)
-			}
-			if got := groupNames(t, policy, "spec", "subjects", "groups"); !slices.Equal(got, tc.wantFile) {
-				t.Fatalf("file policy subjects.groups = %v, want %v", got, tc.wantFile)
-			}
+			runOwnerGroupsCase(t, testOrgID, "team-a", tc.groups, tc.wantFile, tc.wantAPI, tc.wantCode)
 		})
+	}
+}
+
+// TestSubscriptionsGitOwnerGroupsADRShape checks the Keycloak demo / ADR
+// organization UUID and bare group names land as {org}/{group} in the file
+// (same shape as the shared-OIDC token groups claim).
+func TestSubscriptionsGitOwnerGroupsADRShape(t *testing.T) {
+	t.Parallel()
+	const adrOrg = "42c3e46f-2477-44d7-a85b-d3b43f6b31fa"
+	runOwnerGroupsCase(t, adrOrg, "adr-sub",
+		[]string{"ai-grid-users", "ai-grid-admins"},
+		[]string{adrOrg + "/ai-grid-users", adrOrg + "/ai-grid-admins"},
+		[]string{"ai-grid-users", "ai-grid-admins"},
+		0,
+	)
+}
+
+func runOwnerGroupsCase(t *testing.T, orgID, subID string, groups, wantFile, wantAPI []string, wantCode connect.Code) {
+	t.Helper()
+	ctx := context.Background()
+	writer := gitops.NewMemoryWriter(gitModelSeed("sim-model"))
+	srv := mustGitSubscriptionsServer(t, writer)
+	object := gitSampleSubscription(subID)
+	object.Spec.Organization = &aigridv1.SubscriptionOrganization{Id: orgID}
+	object.Spec.Owner.Groups = groups
+	created, err := srv.Create(ctx, &aigridv1.SubscriptionsCreateRequest{Object: object})
+	if wantCode != 0 {
+		assertConnectCode(t, err, wantCode)
+		return
+	}
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if got := created.GetObject().GetSpec().GetOwner().GetGroups(); !slices.Equal(got, wantAPI) {
+		t.Fatalf("Create owner.groups = %v, want %v", got, wantAPI)
+	}
+	if got := created.GetObject().GetSpec().GetOrganization().GetId(); got != orgID {
+		t.Fatalf("Create organization.id = %q, want %q", got, orgID)
+	}
+	sub, policy := readGitSubscriptionFile(t, writer, subID)
+	if got := groupNames(t, sub, "spec", "owner", "groups"); !slices.Equal(got, wantFile) {
+		t.Fatalf("file owner.groups = %v, want %v", got, wantFile)
+	}
+	if got := groupNames(t, policy, "spec", "subjects", "groups"); !slices.Equal(got, wantFile) {
+		t.Fatalf("file policy subjects.groups = %v, want %v", got, wantFile)
 	}
 }
 

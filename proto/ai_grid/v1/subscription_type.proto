@@ -59,6 +59,9 @@ message SubscriptionSpec {
 // SubscriptionOrganization identifies the organization that administers a subscription.
 message SubscriptionOrganization {
   // Organization identifier. Non-empty; immutable once set.
+  // Must match the shared-OIDC claim
+  // https://redhat.com/maas/orgs[].organization_id (e.g. a Keycloak
+  // Organization UUID). Git mode qualifies owner.groups as "{id}/{group}".
   string id = 1 [(buf.validate.field).string = {
     min_len: 1
     max_len: 253
@@ -67,7 +70,9 @@ message SubscriptionOrganization {
 
 // SubscriptionOwner names the groups and users that own the entitlement.
 message SubscriptionOwner {
-  // IdP / Kubernetes group names.
+  // Bare IdP group names (e.g. "ai-grid-users"). Git mode stores them as
+  // "{organization.id}/{group}" to match the OIDC groups claim; reads return
+  // the bare names.
   repeated string groups = 1;
 
   // User names (for example service accounts).
