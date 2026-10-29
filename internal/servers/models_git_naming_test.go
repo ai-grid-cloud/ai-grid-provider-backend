@@ -162,6 +162,45 @@ func TestModelsGitMigratesEntryServingAnotherName(t *testing.T) {
 	}
 }
 
+// Annotation ai-grid/api picks the OpenAI API the ExternalModel calls:
+// completions for base models with no chat template, chat (the default)
+// otherwise.
+func TestModelsGitAPIAnnotation(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	writer := gitops.NewMemoryWriter(nil)
+	srv := mustGitModelsServer(t, writer)
+
+	for id, want := range map[string]string{"chat-default": "/v1/chat/completions", "chat": "/v1/chat/completions", "completions": "/v1/completions"} {
+		model := gitSampleModel(id, "site-"+id)
+		if id != "chat-default" {
+			model.Metadata.Annotations["ai-grid/api"] = id
+		}
+		created, err := srv.Create(ctx, &aigridv1.ModelsCreateRequest{Object: model})
+		if err != nil {
+			t.Fatalf("Create(%s) error = %v", id, err)
+		}
+		external := readGitYAMLDocs(t, writer, "catalog/models/"+id+"/catalog/model.yaml")[0]
+		refs, _, _ := unstructured.NestedSlice(external.Object, "spec", "externalProviderRefs")
+		if got := refs[0].(map[string]interface{})["path"]; got != want {
+			t.Fatalf("%s: ExternalModel path = %v, want %s", id, got, want)
+		}
+		if id != "chat-default" && created.GetObject().GetMetadata().GetAnnotations()["ai-grid/api"] != id {
+			t.Fatalf("%s: Create annotations = %v, want ai-grid/api kept", id, created.GetObject().GetMetadata().GetAnnotations())
+		}
+	}
+
+	bad := gitSampleModel("bad", "site-a")
+	bad.Metadata.Annotations["ai-grid/api"] = "embeddings"
+	_, err := srv.Create(ctx, &aigridv1.ModelsCreateRequest{Object: bad})
+	assertConnectCode(t, err, connect.CodeInvalidArgument)
+
+	// Subscriptions still don't accept the annotation.
+	if err := validateGitMetadata(&aigridv1.Metadata{Annotations: map[string]string{"ai-grid/api": "chat"}}); err == nil {
+		t.Fatal("validateGitMetadata accepted ai-grid/api, want it limited to models")
+	}
+}
+
 func gitTargetModel(t *testing.T, writer gitops.Writer, id string) string {
 	t.Helper()
 	external := readGitYAMLDocs(t, writer, "catalog/models/"+id+"/catalog/model.yaml")[0]

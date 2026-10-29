@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"path"
 	"slices"
 	"strconv"
@@ -49,6 +50,13 @@ const (
 	// clusterNameLabelKey is the label ACM sets on every ManagedCluster to
 	// its name.
 	clusterNameLabelKey = "name"
+
+	// modelAPIAnnotation picks the OpenAI API the ExternalModel calls on the
+	// model: modelAPIChat (the default) or modelAPICompletions, for base
+	// models whose tokenizer has no chat template.
+	modelAPIAnnotation  = "ai-grid/api"
+	modelAPIChat        = "chat"
+	modelAPICompletions = "completions"
 )
 
 func modelDeploymentGitDir(id string) string { return path.Join(modelsGitDir, id, "deployment") }
@@ -102,7 +110,7 @@ func (s *ModelsServer) gitGet(ctx context.Context, id string) (*aigridv1.Model, 
 
 func (s *ModelsServer) gitCreate(ctx context.Context, object *aigridv1.Model) (*aigridv1.Model, error) {
 	id := object.GetId()
-	if err := validateGitMetadata(object.GetMetadata()); err != nil {
+	if err := validateModelGitMetadata(object.GetMetadata()); err != nil {
 		return nil, err
 	}
 	clusters, err := gitPlacementClusters(object.GetSpec())
@@ -152,7 +160,7 @@ func (s *ModelsServer) gitUpdate(ctx context.Context, req *aigridv1.ModelsUpdate
 		return nil, err
 	}
 	merged.Status = nil
-	if err := validateGitMetadata(merged.GetMetadata()); err != nil {
+	if err := validateModelGitMetadata(merged.GetMetadata()); err != nil {
 		return nil, err
 	}
 	normalizeModelResources(merged.GetSpec().GetMain())
@@ -469,6 +477,10 @@ func (s *ModelsServer) renderModelDeployment(object *aigridv1.Model, version int
 func (s *ModelsServer) renderModelCatalog(object *aigridv1.Model) ([]byte, error) {
 	id := object.GetId()
 	target := servedModelName(object)
+	apiPath := "/v1/chat/completions"
+	if object.GetMetadata().GetAnnotations()[modelAPIAnnotation] == modelAPICompletions {
+		apiPath = "/v1/completions"
+	}
 	external := &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": "inference.opendatahub.io/v1alpha1",
 		"kind":       "ExternalModel",
@@ -479,9 +491,11 @@ func (s *ModelsServer) renderModelCatalog(object *aigridv1.Model) ([]byte, error
 		},
 		"spec": map[string]interface{}{
 			"externalProviderRefs": []interface{}{map[string]interface{}{
-				"ref":         map[string]interface{}{"name": gridProviderName},
+				"ref": map[string]interface{}{"name": gridProviderName},
+				// MaaS has no completions format; openai-chat with the
+				// completions path is what the reference's sample uses.
 				"apiFormat":   "openai-chat",
-				"path":        "/v1/chat/completions",
+				"path":        apiPath,
 				"targetModel": target,
 				"weight":      int64(1),
 			}},
@@ -764,4 +778,21 @@ func checkServedName(id string, spec *aigridv1.ModelSpec) error {
 	}
 	source.Name = id
 	return nil
+}
+
+// validateModelGitMetadata is validateGitMetadata plus the models-only
+// annotation modelAPIAnnotation, which must be modelAPIChat or
+// modelAPICompletions.
+func validateModelGitMetadata(meta *aigridv1.Metadata) error {
+	annotations := meta.GetAnnotations()
+	api, ok := annotations[modelAPIAnnotation]
+	if !ok {
+		return validateGitMetadata(meta)
+	}
+	if api != modelAPIChat && api != modelAPICompletions {
+		return connect.Errorf(connect.CodeInvalidArgument, "metadata.annotations[%s] must be %q or %q, got %q", modelAPIAnnotation, modelAPIChat, modelAPICompletions, api)
+	}
+	rest := maps.Clone(annotations)
+	delete(rest, modelAPIAnnotation)
+	return validateGitMetadata(&aigridv1.Metadata{Labels: meta.GetLabels(), Annotations: rest})
 }

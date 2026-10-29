@@ -290,6 +290,10 @@ For models:
   another name reads back with the id, and its next update makes it serve the
   id, which restarts its pods once; that update also removes annotation
   `ai-grid/model-name`, which only the first builds that served the id wrote.
+- Annotation `ai-grid/api` picks the OpenAI API the `ExternalModel` calls:
+  `chat` (the default, `/v1/chat/completions`) or `completions`
+  (`/v1/completions`, for base models with no chat template). Only models
+  accept it.
 - `status.placement` lists the clusters the file places the model on
   (`selected_clusters`, cluster names), and the distinct values of their
   `location` labels (`locations`, read from the ManagedClusters; not cluster
