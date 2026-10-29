@@ -169,6 +169,15 @@ func (ModelPhase) EnumDescriptor() ([]byte, []int) {
 type Model struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Unique identifier. Equals metadata.name (DNS-1123 label).
+	//
+	// Models/Create also refuses an id longer than 35 characters
+	// (InvalidArgument). The AI gateway on each ingress site names a Service
+	// provider-selection-required-<id> without truncating it, and a name over
+	// 63 characters stops every model on that site from being served
+	// (opendatahub-io/ai-gateway-controller pkg/controller/reconciler.go). The
+	// limit stays a server check on Create, not max_len here, so models saved
+	// before it still read, update and delete. It goes once the gateway
+	// shortens long names.
 	Id            string       `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	Metadata      *Metadata    `protobuf:"bytes,2,opt,name=metadata,proto3" json:"metadata,omitempty"`
 	Spec          *ModelSpec   `protobuf:"bytes,3,opt,name=spec,proto3" json:"spec,omitempty"`

@@ -19,6 +19,15 @@ option go_package = "github.com/osac-project/ai-grid-provider-backend/gen/ai_gri
 // The `status` contains the current status and is provided by the system.
 message Model {
   // Unique identifier. Equals metadata.name (DNS-1123 label).
+  //
+  // Models/Create also refuses an id longer than 35 characters
+  // (InvalidArgument). The AI gateway on each ingress site names a Service
+  // provider-selection-required-<id> without truncating it, and a name over
+  // 63 characters stops every model on that site from being served
+  // (opendatahub-io/ai-gateway-controller pkg/controller/reconciler.go). The
+  // limit stays a server check on Create, not max_len here, so models saved
+  // before it still read, update and delete. It goes once the gateway
+  // shortens long names.
   string id = 1 [(buf.validate.field).string = {
     min_len: 1
     max_len: 63

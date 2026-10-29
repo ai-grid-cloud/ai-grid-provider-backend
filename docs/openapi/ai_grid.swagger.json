@@ -411,7 +411,7 @@
         "parameters": [
           {
             "name": "object.id",
-            "description": "Unique identifier. Equals metadata.name (DNS-1123 label).",
+            "description": "Unique identifier. Equals metadata.name (DNS-1123 label).\n\nModels/Create also refuses an id longer than 35 characters\n(InvalidArgument). The AI gateway on each ingress site names a Service\nprovider-selection-required-\u003cid\u003e without truncating it, and a name over\n63 characters stops every model on that site from being served\n(opendatahub-io/ai-gateway-controller pkg/controller/reconciler.go). The\nlimit stays a server check on Create, not max_len here, so models saved\nbefore it still read, update and delete. It goes once the gateway\nshortens long names.",
             "in": "path",
             "required": true,
             "type": "string"
@@ -1609,7 +1609,7 @@
       "properties": {
         "id": {
           "type": "string",
-          "description": "Unique identifier. Equals metadata.name (DNS-1123 label)."
+          "description": "Unique identifier. Equals metadata.name (DNS-1123 label).\n\nModels/Create also refuses an id longer than 35 characters\n(InvalidArgument). The AI gateway on each ingress site names a Service\nprovider-selection-required-\u003cid\u003e without truncating it, and a name over\n63 characters stops every model on that site from being served\n(opendatahub-io/ai-gateway-controller pkg/controller/reconciler.go). The\nlimit stays a server check on Create, not max_len here, so models saved\nbefore it still read, update and delete. It goes once the gateway\nshortens long names."
         },
         "metadata": {
           "$ref": "#/definitions/v1Metadata"

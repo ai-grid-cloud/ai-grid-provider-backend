@@ -619,6 +619,12 @@ Leave `spec.model.name` out, or send the id: it's deprecated. The model is serve
 `InvalidArgument`. A read returns the name the model is served as: the id, or for a model saved
 before this rule, the name it still serves until its next update switches it to the id.
 
+A new model's id can be at most 35 characters; Create answers `InvalidArgument` for a longer one.
+The AI gateway on each ingress site names a Service `provider-selection-required-<id>` without
+truncating it, and a name over Kubernetes' 63 characters stops every model on that site from being
+served ([ai-gateway-controller `reconciler.go`](https://github.com/opendatahub-io/ai-gateway-controller/blob/7ee8457d9922394889a4737e6111dbaa2ae706eb/pkg/controller/reconciler.go#L2487-L2489)).
+A model saved before this limit still reads, updates and deletes.
+
 A placed model's status names its clusters and, separately, where they are:
 
 ```json

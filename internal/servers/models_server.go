@@ -200,6 +200,9 @@ func (s *ModelsServer) Create(ctx context.Context, req *aigridv1.ModelsCreateReq
 	if err := validateModelID(id); err != nil {
 		return nil, err
 	}
+	if err := checkNewModelIDLength(id); err != nil {
+		return nil, err
+	}
 	if object.Metadata == nil {
 		object.Metadata = &aigridv1.Metadata{}
 	}
@@ -633,6 +636,33 @@ func validateModelID(id string) error {
 	}
 	if !modelNameRE.MatchString(id) {
 		return connect.Errorf(connect.CodeInvalidArgument, "id %q is not a valid RFC 1123 DNS label", id)
+	}
+	return nil
+}
+
+// gatewayServicePrefix is how opendatahub-io/ai-gateway-controller names the
+// Service it makes for each model on an ingress site's gateway:
+// provider-selection-required-<model id>, with no truncation
+// (pkg/controller/reconciler.go:54 and :2487-2489 at 7ee8457). It builds those
+// Services for every model on the gateway in one reconcile (:1812-1840), so a
+// single name over Kubernetes' 63 characters fails it for every model there:
+// on demo1, modelcar-granite-4-0-h-tiny-fp8-dynamic (39 characters) stopped
+// every model added after it from being served.
+const gatewayServicePrefix = "provider-selection-required-"
+
+// maxNewModelIDLen is the longest id whose gateway Service name fits in 63
+// characters: 63 - len(gatewayServicePrefix) = 35.
+const maxNewModelIDLen = 63 - len(gatewayServicePrefix)
+
+// checkNewModelIDLength refuses a new model whose id the AI gateway can't
+// name a Service after. It applies on Create only: a model saved before the
+// limit keeps working for reads, updates and deletes. Lift it once
+// ai-gateway-controller shortens long names.
+func checkNewModelIDLength(id string) error {
+	if len(id) > maxNewModelIDLen {
+		return connect.Errorf(connect.CodeInvalidArgument,
+			"id %q is %d characters; a new model's id can be at most %d characters, because the AI gateway on each ingress site names a Service %s<id>, and a name over 63 characters stops every model on that site from being served",
+			id, len(id), maxNewModelIDLen, gatewayServicePrefix)
 	}
 	return nil
 }
