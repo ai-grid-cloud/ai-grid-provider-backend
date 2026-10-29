@@ -246,7 +246,7 @@ func TestClientModelsCRUD(t *testing.T) {
 		Spec: &aigridv1.ModelSpec{
 			Model: &aigridv1.ModelSource{
 				Uri:  "hf://facebook/opt-125m",
-				Name: "facebook/opt-125m",
+				Name: "client-opt",
 			},
 			Replicas: &replicas,
 			Main: &aigridv1.ModelContainer{

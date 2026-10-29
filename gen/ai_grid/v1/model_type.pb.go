@@ -369,7 +369,10 @@ type ModelSource struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Artifact URI (hf://, oci://, s3://, pvc://, http(s)://).
 	Uri string `protobuf:"bytes,1,opt,name=uri,proto3" json:"uri,omitempty"`
-	// Identifier clients send in the request model field. Defaults to id.
+	// Name clients send in the request model field: always the model id, which
+	// the model is served as. Send it empty or equal to id; any other value is
+	// rejected. Reads return the id. For a human-readable name, use annotation
+	// openshift.io/display-name.
 	Name          string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

@@ -1982,7 +1982,7 @@
         },
         "name": {
           "type": "string",
-          "description": "Identifier clients send in the request model field. Defaults to id."
+          "description": "Name clients send in the request model field: always the model id, which\nthe model is served as. Send it empty or equal to id; any other value is\nrejected. Reads return the id. For a human-readable name, use annotation\nopenshift.io/display-name."
         }
       },
       "description": "Model artifact source (spec.model)."

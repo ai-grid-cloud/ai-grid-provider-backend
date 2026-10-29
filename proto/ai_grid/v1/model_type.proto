@@ -87,7 +87,10 @@ message ModelSource {
     max_len: 2048
   }];
 
-  // Identifier clients send in the request model field. Defaults to id.
+  // Name clients send in the request model field: always the model id, which
+  // the model is served as. Send it empty or equal to id; any other value is
+  // rejected. Reads return the id. For a human-readable name, use annotation
+  // openshift.io/display-name.
   string name = 2;
 }
 

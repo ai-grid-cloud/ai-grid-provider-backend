@@ -39,6 +39,10 @@ const (
 	// LLMInferenceService, so a read returns the placement without scanning
 	// every cluster index.
 	gitClustersAnnotation = "ai-grid/clusters"
+	// legacyModelNameAnnotation held the caller's spec.model.name in the
+	// first builds that served a model as its id. The backend no longer
+	// writes it: a read drops it, so the next update removes it from Git.
+	legacyModelNameAnnotation = "ai-grid/model-name"
 	// gridProviderName is the ExternalProvider that publishes the grid
 	// gateway to MaaS on each ingress spoke.
 	gridProviderName = "grid-provider"
@@ -153,6 +157,9 @@ func (s *ModelsServer) gitUpdate(ctx context.Context, req *aigridv1.ModelsUpdate
 	}
 	normalizeModelResources(merged.GetSpec().GetMain())
 	if err := validateModelSpec(merged.GetSpec()); err != nil {
+		return nil, err
+	}
+	if err := checkServedName(id, merged.GetSpec()); err != nil {
 		return nil, err
 	}
 	clusters, err := gitPlacementClusters(merged.GetSpec())
@@ -420,7 +427,11 @@ func (s *ModelsServer) renderModelDeployment(object *aigridv1.Model, version int
 	}
 	annotations[gitVersionAnnotation] = strconv.FormatInt(int64(version), 10)
 	annotations[gitClustersAnnotation] = strings.Join(clusters, ",")
+	delete(annotations, legacyModelNameAnnotation)
 	llm.SetAnnotations(annotations)
+	if err := unstructured.SetNestedField(llm.Object, servedModelName(object), "spec", "model", "name"); err != nil {
+		return nil, err
+	}
 
 	policy := &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": "networking.k8s.io/v1",
@@ -457,10 +468,7 @@ func (s *ModelsServer) renderModelDeployment(object *aigridv1.Model, version int
 // grid provider, and the MaaSModelRef that lists it in MaaS.
 func (s *ModelsServer) renderModelCatalog(object *aigridv1.Model) ([]byte, error) {
 	id := object.GetId()
-	target := object.GetSpec().GetModel().GetName()
-	if target == "" {
-		target = id
-	}
+	target := servedModelName(object)
 	external := &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": "inference.opendatahub.io/v1alpha1",
 		"kind":       "ExternalModel",
@@ -523,8 +531,15 @@ func parseGitModel(data []byte) (*gitModel, error) {
 	if s := annotations[gitClustersAnnotation]; s != "" {
 		clusters = strings.Split(s, ",")
 	}
+	// A model is served as its id. An entry written before that serves its
+	// own spec.model.name; it reads as the id, and its next update rewrites
+	// it to serve the id.
+	if model.Spec.GetModel() != nil {
+		model.Spec.Model.Name = model.GetId()
+	}
 	delete(annotations, gitVersionAnnotation)
 	delete(annotations, gitClustersAnnotation)
+	delete(annotations, legacyModelNameAnnotation)
 	if len(annotations) == 0 {
 		model.Metadata.Annotations = nil
 	}
@@ -721,4 +736,32 @@ func modelGitError(op, id string, err error) error {
 	default:
 		return connect.Errorf(connect.CodeUnavailable, "%s Model %q: git: %v", op, id, err).WithCause(err)
 	}
+}
+
+// servedModelName is the name vLLM serves the model as and the ExternalModel
+// targets: its id. MaaS lists the model under its id and forwards the request
+// body unchanged (the AI gateway applies an ExternalModel's targetModel only
+// with API translation on), so the "model" a tenant sends, and the grid routes
+// on, is the id. renderModelDeployment sets the LLMInferenceService's
+// spec.model.name to it. Ids are unique, so no two models share a served name.
+func servedModelName(object *aigridv1.Model) string {
+	return object.GetId()
+}
+
+// checkServedName accepts a spec.model.name that is empty or the id, and sets
+// it to the id. As in odh-dashboard, a model's served name is its resource
+// name; the human-readable name is annotation openshift.io/display-name.
+// Any other name would be one nothing serves, so it is InvalidArgument.
+func checkServedName(id string, spec *aigridv1.ModelSpec) error {
+	source := spec.GetModel()
+	if source == nil {
+		return nil
+	}
+	if name := source.GetName(); name != "" && name != id {
+		return connect.Errorf(connect.CodeInvalidArgument,
+			"spec.model.name %q must be empty or the model id %q: a model is served as its id, which is the name tenants send; set a human-readable name in annotation %s",
+			name, id, annotationDisplayName)
+	}
+	source.Name = id
+	return nil
 }
