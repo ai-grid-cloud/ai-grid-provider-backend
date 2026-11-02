@@ -78,7 +78,9 @@ spec:
     spec:
       containers:
         - name: keycloak
-          image: quay.io/keycloak/keycloak:26.3
+          # Match hub / Option 2 docs (26.8): org IdP link PUT with
+          # autoMembership/membershipType is not on 26.3 (HTTP 405).
+          image: quay.io/keycloak/keycloak:26.8.0
           args: ["start-dev", "--http-port=8080"]
           env:
             - name: KC_BOOTSTRAP_ADMIN_USERNAME
