@@ -228,11 +228,11 @@ func (s *TenantsServer) Create(ctx context.Context, req *aigridv1.TenantsCreateR
 		tenantCreateTimeAttribute: {s.now().UTC().Format(time.RFC3339)},
 	}
 	if normalizedIdP != nil {
-		raw, err := identityProviderToAttribute(normalizedIdP)
+		chunks, err := identityProviderToAttributeValues(normalizedIdP)
 		if err != nil {
 			return nil, connect.Errorf(connect.CodeInternal, "encode identity provider: %v", err)
 		}
-		attrs[tenantIdentityProviderAttribute] = []string{raw}
+		attrs[tenantIdentityProviderAttribute] = chunks
 	}
 
 	org := keycloak.Organization{
