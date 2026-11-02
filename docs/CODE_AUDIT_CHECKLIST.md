@@ -200,7 +200,7 @@ Source: [SOLID design audit](477777f1-261c-4916-827a-4a836bea6cd6)
   - Deferred: no resource service layer yet; this pass only DIP interfaces + helpers + policystatus split.
 
 ### SOLID-003: Asymmetric dependency inversion across servers
-- [ ] Decision: DO
+- [x] Decision: DO
 - Severity: High
 - Principle: DIP | Modularity
 - Location: `tenants_server.go` (`organizationClient`); Models/Subscriptions (`*CatalogStatusReader`); Clusters (`*GPUInventory`)
@@ -240,27 +240,27 @@ Source: [SOLID design audit](477777f1-261c-4916-827a-4a836bea6cd6)
   -
 
 ### SOLID-007: `CatalogStatusReader` mixes infra I/O and compliance domain parsing
-- [ ] Decision: DO
+- [x] Decision: DO (partial)
 - Severity: Medium
 - Principle: SRP | Modularity
 - Location: `internal/servers/catalog_status.go`
 - Finding: One type both talks to hub Policies via `dynamic.Interface` and owns fragile compliance-message parsing.
 - Recommendation: Split pure `parseCompliance` / report aggregation into a small status domain type; keep a thin Policy client that returns raw messages or unstructured.
 - Notes / user comments:
-  - Partial: extracted pure ParseCompliance into internal/policystatus; CatalogStatusReader keeps Policy I/O. Further status aggregation still in servers.
+  - Partial: extracted pure ParseCompliance into internal/policystatus; CatalogStatusReader keeps Policy I/O. Further status aggregation still in servers (follow-up).
 
 ### SOLID-008: Cluster domain logic trapped in the handler package
 - [ ] Decision: TODO | DO | SKIP
 - Severity: Medium
 - Principle: SRP | Modularity
-- Location: `managed_cluster_state.go`, `managed_cluster_location.go`, `managed_cluster_mapper.go`, `cloud_regions.go`, `cluster_gpus.go`
+- Location: `managed_cluster_state.go`, `managed_cluster_location.go`, `managed_cluster_mapper.go`, `cloud_regions.go`, `managed_cluster_gpus.go`
 - Finding: Pure-ish rules already sit beside Connect/K8s handlers. `cloud_regions.go` is a large static dataset inside `servers`. `geo` is correctly extracted; the rest is not.
 - Recommendation: Move state/location/region lookup (and optionally GPU label mapping) to `internal/clusters` (or extend `geo`).
 - Notes / user comments:
   -
 
 ### SOLID-009: Shared list/pagination helpers mis-owned under cluster mapper
-- [ ] Decision: DO
+- [x] Decision: DO
 - Severity: Low
 - Principle: SRP | ISP
 - Location: `managed_cluster_mapper.go` (`validateListLimit`, `applyListWindow`)
@@ -270,7 +270,7 @@ Source: [SOLID design audit](477777f1-261c-4916-827a-4a836bea6cd6)
   - Moved validateListLimit/applyListWindow to servers/list.go (neutral ownership; kept in servers to avoid Connect dependency in a tiny package).
 
 ### SOLID-010: Duplicated identity validation (and similar constants)
-- [ ] Decision: DO
+- [x] Decision: DO
 - Severity: Low
 - Principle: SRP | OCP
 - Location: `clusters_server.go` (`managedClusterNameRE`); `tenants_server.go` (`tenantNameRE`)
@@ -341,136 +341,11 @@ Source: [SOLID design audit](477777f1-261c-4916-827a-4a836bea6cd6)
 
 Source: [Style consistency audit](57da2731-40ff-49b0-b819-0360cd59d17c)
 
-### STYLE-001: Prefer `connect.Errorf` (or `NewError`) consistently for static validation
-- [ ] Decision: DO
-- Severity: Medium
-- Location: `models_server.go`, `subscriptions_server.go` vs `clusters_server.go`, `tenants_server.go`, `errors.go`
-- Finding: Models/Subscriptions use `connect.NewError(...)` for some static strings; Clusters/Tenants use `connect.Errorf`. `errors.go` documents Errorf + WithCause as the handler error path.
-- Recommendation: Standardize on one form for static strings across all `*_server.go`; keep Errorf+WithCause for wrapped causes.
-- Notes / user comments:
-  - Standardized static validation on connect.Errorf across models/subscriptions servers + git helpers + list limit. Kept Errorf+WithCause for wrapped causes. OSAC API field names untouched.
-
-### STYLE-002: Fix go-standard import grouping in older server files
-- [ ] Decision: DO
-- Severity: Low
-- Location: `tenants_server.go`, `ai_grid_server.go` (vs `models_server.go`, `clusters_server.go`)
-- Finding: Tenants/AiGrid put `connect` before stdlib; Models/Clusters use stdlib → third-party.
-- Recommendation: Reorder imports to match Models/Clusters; optionally enforce via goimports/gci.
-- Notes / user comments:
-  - Fixed import grouping in tenants_server.go and ai_grid_server.go (stdlib → third-party).
-
-### STYLE-003: Align slog Context vs non-Context call sites
-- [ ] Decision: TODO | DO | SKIP
-- Severity: Medium
-- Location: `tenants_server.go` vs `models_server.go` / `models_git.go`; `cmd/.../main.go`; `restgateway`; `gitops`
-- Finding: Mixed `WarnContext` vs `Warn` on request paths; entrypoint/gateway/gitops use package `slog` rather than injected logger.
-- Recommendation: On handler paths with `ctx`, use `*Context` methods; keep package `slog` for process lifecycle only, or inject one logger from `main`.
-- Notes / user comments:
-  - Deferred this pass: mixed slog Context vs non-Context; needs careful wiring without large refactor.
-
-### STYLE-004: Dead or unused injected loggers on some servers
-- [ ] Decision: TODO | DO | SKIP
-- Severity: Low
-- Location: `ai_grid_server.go`; `cmd/.../main.go`
-- Finding: Builders accept `SetLogger`, but `main` never wires one; AiGridServer stores a logger it never uses.
-- Recommendation: Wire a logger from `main` and use it, or drop unused fields/`SetLogger` where nothing logs.
-- Notes / user comments:
-  - Deferred this pass: AiGrid unused logger / main never wires SetLogger — leave until logging pass.
-
-### STYLE-005: Normalize `stale*Error` helper return types
-- [ ] Decision: DO
-- Severity: Low
-- Location: `errors.go` / models / subscriptions (`*connect.Error`) vs `tenants_server.go` (`error`)
-- Finding: Parallel helpers differ in return type for the same Aborted pattern.
-- Recommendation: Make all `stale*Error` helpers return `*connect.Error`.
-- Notes / user comments:
-  - staleTenantError now returns *connect.Error like staleCluster/Model/Subscription.
-
-### STYLE-006: Deduplicate near-identical git error mappers
-- [ ] Decision: DO
-- Severity: Low
-- Location: `models_git.go` (`modelGitError`); `subscriptions_git.go` (`subscriptionGitError`)
-- Finding: Same switch on gitops sentinel errors → Connect codes, differing only in resource noun.
-- Recommendation: Extract one package-private `mapGitopsError(...)` beside other mappers, or document intentional duplication.
-- Notes / user comments:
-  - Extracted mapGitopsError in servers/gitops_errors.go; modelGitError/subscriptionGitError thin wrappers.
-
-### STYLE-007: Clarify servers file naming (plural service vs singular type vs ManagedCluster)
-- [ ] Decision: TODO | DO | SKIP
-- Severity: Info
-- Location: `internal/servers/`
-- Finding: Plural for Connect service files; singular for proto object helpers; cluster helpers mix `managed_cluster_*` with `cluster_gpus`.
-- Recommendation: Keep plural/singular split; rename `cluster_gpus.go` → `managed_cluster_gpus.go` (or document the short form).
-- Notes / user comments:
-  -
-
-### STYLE-008: Add package docs where sibling packages already have them
-- [ ] Decision: TODO | DO | SKIP
-- Severity: Info
-- Location: missing on `servers`, `keycloak`, `restgateway`, `client`; present on `acmsearch`, `celfilter`, `geo`, `gitops`, `fakeinfra`, `deploycheck`
-- Finding: Newer/leaf packages lead with `Package` docs; core packages jump straight to `package X`.
-- Recommendation: Add a short `doc.go` for the missing packages matching `gitops`/`acmsearch` tone.
-- Notes / user comments:
-  -
-
-### STYLE-009: Align client construction idioms (Builder vs Config+New)
-- [ ] Decision: TODO | DO | SKIP
-- Severity: Info
-- Location: `internal/servers` + `client` vs `keycloak`, `acmsearch`, `restgateway`
-- Finding: Servers/public client use builders; infra clients use `New`/`Config`. Both are fine Go.
-- Recommendation: Keep builders for Connect servers and `client`; treat `New`+struct as infra convention and mention in package docs.
-- Notes / user comments:
-  -
-
-### STYLE-010: Harmonize `SetLogger` godoc one-liners
-- [ ] Decision: DO
-- Severity: Info
-- Location: all `*_server.go` `SetLogger` docs
-- Finding: Wording drifts while behavior is the same.
-- Recommendation: One shared phrase, e.g. `SetLogger sets the logger. Optional; slog.Default() when unset.`
-- Notes / user comments:
-  - Harmonized SetLogger godoc to “Optional; slog.Default() when unset.” on AiGrid/Clusters/Tenants/Models/Subscriptions.
-
-### STYLE-011: Remove or quarantine deprecated Tenants builder alias
-- [ ] Decision: DO
-- Severity: Low
-- Location: `tenants_server.go` — `SetOrganizationLister` → `SetOrganizationClient`
-- Finding: Deprecated alias remains beside the current setter in an `internal` package.
-- Recommendation: Delete `SetOrganizationLister` after confirming no callers.
-- Notes / user comments:
-  - Removed SetOrganizationLister; updated fakeinfra caller to SetOrganizationClient.
-
-### STYLE-012: Keep `docs/API.md` test-framework guidance honest for this repo
-- [ ] Decision: TODO | DO | SKIP
-- Severity: Medium
-- Location: `docs/API.md` §10 vs actual `*_test.go` / `AGENTS.md`
-- Finding: Reference-architecture Ginkgo section still reads as local standard; repo uses stdlib `testing`.
-- Recommendation: Mark Ginkgo as fulfillment-service reference only; state house style is stdlib `testing` colocated with packages.
-- Notes / user comments:
-  - Override for this remediation: do NOT trim OSAC from API.md for field/shape concerns; keep OSAC mapping. Ginkgo-vs-stdlib note still optional separately.
-
-### STYLE-013: Draft vs production CEL filter error-code style
-- [ ] Decision: TODO | DO | SKIP
-- Severity: Info
-- Location: `internal/celfilter` vs `internal/fakeinfra/draft/celfilter`
-- Finding: Production maps to Connect codes; draft maps to gRPC status. Allowed by draft boundary, but easy to copy the wrong error type.
-- Recommendation: Keep the split; add package comments forbidding imports of the other, or share pure compile/eval and wrap at call site.
-- Notes / user comments:
-  -
-
-### STYLE-014: Proto/gen boundary is clean — preserve it
-- [ ] Decision: TODO | DO | SKIP
-- Severity: Info
-- Location: `gen/`, `proto/`, hand-written `internal/servers` + `client`
-- Finding: Handlers implement generated Connect handlers; no hand-edits under `gen/`; `.golangci.yml` excludes `gen/`.
-- Recommendation: No change — never edit `gen/`; regenerate via `make generate`.
-- Notes / user comments:
-  -
-
-### Style posture (summary)
-- Dominant style: Connect-v2 + builders, `Errorf`+`WithCause`, `%w` in infra, stdlib tests.
-- Biggest drift: error-construction API and logging Context/injection.
-- Treat AGENTS + neighboring Go as source of truth until `docs/API.md` is trimmed.
+All STYLE-001–014 items from that audit are done (or confirmed Info no-op for the
+`gen/` boundary). House style now: Connect-v2 + builders for servers/`client`,
+`New`+Config for infra clients, `Errorf`+`WithCause`, request-path
+`slog.*Context`, stdlib `testing`, OSAC kept for API field/shape in `docs/API.md`
+with Ginkgo marked fulfillment-reference only.
 
 ---
 
@@ -548,16 +423,6 @@ Source: [Coding standards audit](300deec2-5ac1-45dd-9f29-5343ee5f18dd)
 - Notes / user comments:
   -
 
-### STD-012: AGENTS.md “Required for every Go change” block is a dumped target catalog
-- [ ] Decision: TODO | DO | SKIP
-- Severity: Low
-- Standard source: AGENTS.md §Validation
-- Location: `AGENTS.md` L128–156
-- Finding: The “required” fenced block lists deploy/image/help targets, then says `make verify` is the aggregate — easy to over/under-run.
-- Recommendation: Replace with a short required list; move the full catalog under `make help` / README only.
-- Notes / user comments:
-  -
-
 ### STD-013: Table-driven / Connect-code test pattern is established
 - [ ] Decision: TODO | DO | SKIP
 - Severity: Low
@@ -565,16 +430,6 @@ Source: [Coding standards audit](300deec2-5ac1-45dd-9f29-5343ee5f18dd)
 - Location: `internal/servers/*_test.go`
 - Finding: Strong pattern: colocated tests, `t.Parallel`, table `t.Run`, `assertConnectCode`. No `TODO`/`FIXME` debt found in `.go` sources.
 - Recommendation: Codify “stdlib testing + table tests + Connect codes” in AGENTS.md / slim Testing section of API.md.
-- Notes / user comments:
-  -
-
-### STD-014: Flaky-risk patterns are limited
-- [ ] Decision: TODO | DO | SKIP
-- Severity: Low
-- Standard source: AGENTS.md; de facto tests
-- Location: `cluster_gpus_test.go`; `fakeinfra/keycloak/stall_test.go`
-- Finding: Most tests are deterministic; a couple use short sleeps.
-- Recommendation: Prefer channels/conditions without fixed sleeps where easy; no broad flaky epidemic.
 - Notes / user comments:
   -
 
@@ -609,16 +464,16 @@ Source: [Coding standards audit](300deec2-5ac1-45dd-9f29-5343ee5f18dd)
   -
 
 ### Standards posture (summary)
-- Proto/codegen discipline is the strongest area; local `make verify` now mirrors CI Check (except PR-only `buf breaking`).
-- Normative docs are still split-brained (`docs/API.md` still OSAC-shaped) — STD-001 / STD-009–010.
-- Testing culture is good (Connect codes / typed errors for API tests; fakeinfra message cites-source is the documented exception). Protovalidate-on-the-wire (STD-005) and Kind/shell/coverage gates remain aspirational.
+- Proto/codegen discipline is the strongest area; local `make verify` now mirrors CI Check (except PR-only `buf breaking`). AGENTS Validation points at `make verify` as the Go gate; full target catalog lives in `make help` / README.
+- Normative docs are still split-brained on observability/linter inventory (`docs/API.md` still OSAC-shaped) — STD-001 / STD-009–010. Testing house style (stdlib) is clarified in API.md §10 while OSAC API shapes stay normative.
+- Testing culture is good (Connect codes / typed errors for API tests; fakeinfra message cites-source is the documented exception, and so are the wire tests whose purpose is “the cause message survives to the caller” — they assert via `assertConnectMessage`, where a failed `errors.As` fails the test). Protovalidate-on-the-wire (STD-005) and Kind/shell/coverage gates remain aspirational.
+- Image policy (beyond STD-018’s Buildx-vs-Podman docs note): intentional. Check runs on every branch push and every PR; image build/publish is main / `v*` / `workflow_dispatch` only. PR preview image workflows stay disabled.
 
 ---
 
 ## Cross-cutting themes (for prioritization)
 
 1. **AuthN/AuthZ + network isolation** (SEC-001–003, SEC-006) block production trust.
-2. **Docs vs reality** (STD-001, STD-009–010, STYLE-012) confuse agents and humans — cheap high leverage.
+2. **Docs vs reality** (STD-001, STD-009–010) — observability/linter sections of API.md still OSAC-shaped; API field/shape + test-framework honesty already addressed.
 3. **`internal/servers` deepening** (SOLID-001–008) unlocks maintainability without changing the proto contract.
 4. **Protovalidate on the wire** (STD-005) closes the remaining “written standard vs enforced” validation gap.
-5. **Style nits** (STYLE-001–011) are good follow-ons after docs/standards alignment.
