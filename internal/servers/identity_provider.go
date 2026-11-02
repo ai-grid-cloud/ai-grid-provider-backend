@@ -17,6 +17,10 @@ import (
 const (
 	tenantIdentityProviderAttribute = "ai-grid/identity-provider"
 	defaultOIDCScopes               = "openid profile email"
+	// keycloakGroupAttributeMax is Keycloak's GROUP_ATTRIBUTE.VALUE column
+	// (varchar(255)). Organization attributes longer than this must be split
+	// across multiple values of the same attribute name.
+	keycloakGroupAttributeMax = 255
 )
 
 var (
@@ -144,6 +148,16 @@ func identityProviderToAttribute(idp *aigridv1.IdentityProvider) (string, error)
 	return string(b), nil
 }
 
+// identityProviderToAttributeValues marshals the IdP and splits it into chunks
+// that fit Keycloak's 255-character group attribute limit.
+func identityProviderToAttributeValues(idp *aigridv1.IdentityProvider) ([]string, error) {
+	raw, err := identityProviderToAttribute(idp)
+	if err != nil {
+		return nil, err
+	}
+	return chunkString(raw, keycloakGroupAttributeMax), nil
+}
+
 func identityProviderFromAttribute(value string) (*aigridv1.IdentityProvider, error) {
 	if strings.TrimSpace(value) == "" {
 		return nil, nil
@@ -160,7 +174,25 @@ func identityProviderFromOrganizationAttrs(attrs map[string][]string) (*aigridv1
 	if len(values) == 0 {
 		return nil, nil
 	}
-	return identityProviderFromAttribute(values[0])
+	return identityProviderFromAttribute(strings.Join(values, ""))
+}
+
+func chunkString(s string, size int) []string {
+	if size <= 0 {
+		return []string{s}
+	}
+	if s == "" {
+		return nil
+	}
+	out := make([]string, 0, (len(s)+size-1)/size)
+	for len(s) > size {
+		out = append(out, s[:size])
+		s = s[size:]
+	}
+	if s != "" {
+		out = append(out, s)
+	}
+	return out
 }
 
 func trimIDPString(field, s string, max int) (string, error) {

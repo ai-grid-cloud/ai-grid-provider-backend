@@ -824,8 +824,18 @@ func TestCreateTenant(t *testing.T) {
 			t.Fatal("response leaked secret value")
 		}
 		stored := store.byID[got.GetObject().GetId()]
-		if len(stored.Attributes[tenantIdentityProviderAttribute]) != 1 {
+		chunks := stored.Attributes[tenantIdentityProviderAttribute]
+		if len(chunks) == 0 {
 			t.Fatalf("missing idp attribute: %+v", stored.Attributes)
+		}
+		for i, c := range chunks {
+			if len(c) > keycloakGroupAttributeMax {
+				t.Fatalf("idp attribute chunk %d length %d exceeds Keycloak limit %d", i, len(c), keycloakGroupAttributeMax)
+			}
+		}
+		gotIdP, err := identityProviderFromOrganizationAttrs(stored.Attributes)
+		if err != nil || gotIdP == nil || gotIdP.GetConfig().GetClientSecretSecretName() != "acme-idp-secret" {
+			t.Fatalf("idp attribute round-trip = %+v, err=%v", gotIdP, err)
 		}
 		if _, ok := store.idps["acme"]; !ok {
 			t.Fatal("idp alias not created")
@@ -2091,11 +2101,13 @@ func TestTenantIdentityProviderPersistence(t *testing.T) {
 	t.Parallel()
 	enabled := true
 	validate := true
+	longBase := "https://idp.example.com/" + strings.Repeat("path/", 40) + "realm"
 	idp := &aigridv1.IdentityProvider{
 		Title: "acme", Description: "d", Enabled: &enabled,
 		Config: &aigridv1.OidcConfig{
 			ClientId: "c", ClientSecretSecretName: "sec",
-			Issuer: "https://i", AuthorizationUrl: "https://a", TokenUrl: "https://t",
+			Issuer: longBase, AuthorizationUrl: longBase + "/auth", TokenUrl: longBase + "/token",
+			JwksUrl: longBase + "/jwks", LogoutUrl: longBase + "/logout",
 			DefaultScopes: defaultOIDCScopes, ValidateSignature: &validate,
 		},
 	}
@@ -2103,13 +2115,30 @@ func TestTenantIdentityProviderPersistence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("to attribute: %v", err)
 	}
+	if len(raw) <= keycloakGroupAttributeMax {
+		t.Fatalf("test IdP JSON too short (%d) to exercise Keycloak attribute chunking", len(raw))
+	}
 	if !strings.Contains(raw, "clientSecretSecretName") && !strings.Contains(raw, "client_secret_secret_name") {
 		t.Fatalf("attribute missing secret name field: %s", raw)
 	}
 	if strings.Contains(raw, `"s3cret"`) {
 		t.Fatalf("attribute leaked a secret value: %s", raw)
 	}
-	got, err := identityProviderFromAttribute(raw)
+	chunks, err := identityProviderToAttributeValues(idp)
+	if err != nil {
+		t.Fatalf("to attribute values: %v", err)
+	}
+	if len(chunks) < 2 {
+		t.Fatalf("expected chunked attribute for long IdP JSON, got %d chunks (%d bytes)", len(chunks), len(raw))
+	}
+	for i, c := range chunks {
+		if len(c) > keycloakGroupAttributeMax {
+			t.Fatalf("chunk %d length %d exceeds %d", i, len(c), keycloakGroupAttributeMax)
+		}
+	}
+	got, err := identityProviderFromOrganizationAttrs(map[string][]string{
+		tenantIdentityProviderAttribute: chunks,
+	})
 	if err != nil {
 		t.Fatalf("from attribute: %v", err)
 	}
