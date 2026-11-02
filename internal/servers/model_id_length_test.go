@@ -32,6 +32,15 @@ func TestModelsGitCreateRefusesIDLongerThan35(t *testing.T) {
 			t.Errorf("Create(%d characters) error = %q, want it to name the 35-character limit and the gateway's Service name", len(id), msg)
 		}
 	}
+
+	// An id given only as metadata.name is held to the same limit.
+	byName := gitSampleModel(strings.Repeat("c", 36), "site-a")
+	byName.Id = ""
+	_, err := srv.Create(ctx, &aigridv1.ModelsCreateRequest{Object: byName})
+	assertConnectCode(t, err, connect.CodeInvalidArgument)
+	if msg := err.Error(); !strings.Contains(msg, "36 characters") {
+		t.Errorf("Create(metadata.name of 36 characters) error = %q, want the length limit", msg)
+	}
 }
 
 // A model saved before the limit keeps working: the limit is on Create only.
