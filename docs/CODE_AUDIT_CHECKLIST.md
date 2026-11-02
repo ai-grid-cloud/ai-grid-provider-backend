@@ -488,26 +488,6 @@ Source: [Coding standards audit](300deec2-5ac1-45dd-9f29-5343ee5f18dd)
 - Notes / user comments:
   -
 
-### STD-002: `make verify` / local `make lint` under-enforce vs CI
-- [ ] Decision: TODO | DO | SKIP
-- Severity: High
-- Standard source: AGENTS.md; Makefile; `.github/workflows/ci.yaml`
-- Location: `Makefile`, `ci.yaml` job `check`
-- Finding: `make verify` = build + unit + lint. Local lint soft-succeeds if golangci-lint is missing. CI always runs pinned golangci-lint, `buf lint`, PR `buf breaking`, and `check-generated` — not in `verify`.
-- Recommendation: Make `verify` (or a new `check`) match CI: require golangci-lint, plus `buf lint` and `check-generated`; document that `buf breaking` remains PR/base-branch only.
-- Notes / user comments:
-  -
-
-### STD-003: AGENTS.md CI blurb says `make generate` dirty diff; CI runs `check-generated`
-- [ ] Decision: TODO | DO | SKIP
-- Severity: Medium
-- Standard source: AGENTS.md; docs/API_CONTRACT.md; ci.yaml
-- Location: `AGENTS.md` L238–243
-- Finding: AGENTS.md claims Check runs `make generate` dirty-diff; workflow runs `make check-generated`.
-- Recommendation: Fix the CI paragraph to say `make check-generated` only.
-- Notes / user comments:
-  -
-
 ### STD-004: Proto contract gates are strong and mostly aligned
 - [ ] Decision: TODO | DO | SKIP
 - Severity: Info
@@ -525,16 +505,6 @@ Source: [Coding standards audit](300deec2-5ac1-45dd-9f29-5343ee5f18dd)
 - Location: `proto/ai_grid/v1/*_type.proto`; `internal/servers/*_server.go`
 - Finding: Protos carry `buf.validate` rules and tests assert protovalidate agrees with hand checks, but production handlers reimplement validation and never call `protovalidate.Validate` / an interceptor.
 - Recommendation: Add a shared validate helper (or Connect interceptor) for Create/Update inputs; keep only cross-resource checks in Go.
-- Notes / user comments:
-  -
-
-### STD-006: Error assertions sometimes match message text, against stated rule
-- [ ] Decision: TODO | DO | SKIP
-- Severity: Medium
-- Standard source: AGENTS.md; docs/API.md §8
-- Location: e.g. `protocols_test.go`, `servers_test.go`, `models_git_naming_test.go`, `fakeinfra/hub/hub_test.go`
-- Finding: Many tests use `connect.CodeOf`; others `strings.Contains(err.Error(), …)` or exact `err.Error()` equality.
-- Recommendation: Prefer code + `errors.As`/`errors.Is` for API tests; document fakeinfra message-matching as an explicit exception.
 - Notes / user comments:
   -
 
@@ -575,16 +545,6 @@ Source: [Coding standards audit](300deec2-5ac1-45dd-9f29-5343ee5f18dd)
 - Location: `.golangci.yml`, `ci.yaml`
 - Finding: Repo config is `default: standard` + a few extras. API.md still lists OSAC extras not enabled.
 - Recommendation: Update API.md to mirror `.golangci.yml`.
-- Notes / user comments:
-  -
-
-### STD-011: Go / tooling version expectations are mostly clear
-- [ ] Decision: TODO | DO | SKIP
-- Severity: Info
-- Standard source: `go.mod`; Containerfile; CI; Makefile
-- Location: `go.mod`, `Containerfile`, `ci.yaml`, `Makefile`
-- Finding: Module line, CI Go, buf, golangci-lint, and plugins are pinned. Local PATH `buf` can drift from CI’s 1.50.0.
-- Recommendation: Optionally add `make prereqs` version checks matching CI pins.
 - Notes / user comments:
   -
 
@@ -648,21 +608,10 @@ Source: [Coding standards audit](300deec2-5ac1-45dd-9f29-5343ee5f18dd)
 - Notes / user comments:
   -
 
-### STD-018: Image publish prefers Docker Buildx in CI while local/docs prefer Podman
-- [ ] Decision: TODO | DO | SKIP
-- Severity: Low
-- Standard source: AGENTS.md; Makefile; publish workflows
-- Location: `.github/workflows/ci.yaml`; `publish-*.yml`
-- Finding: Local `make image` prefers podman; CI publish uses Buildx with pinned digests.
-- Recommendation: Note in AGENTS.md that GitHub Actions uses Buildx; local remains Podman-first.
-- Notes / user comments:
-  -
-
 ### Standards posture (summary)
-- Proto/codegen discipline is the strongest area.
-- Local `make verify` ≠ CI Check — main day-to-day hygiene gap.
-- Normative docs are split-brained (`docs/API.md` still OSAC-shaped).
-- Testing culture is good; protovalidate-on-the-wire and “never match error text” are only partial; Kind/shell/coverage gates are aspirational.
+- Proto/codegen discipline is the strongest area; local `make verify` now mirrors CI Check (except PR-only `buf breaking`).
+- Normative docs are still split-brained (`docs/API.md` still OSAC-shaped) — STD-001 / STD-009–010.
+- Testing culture is good (Connect codes / typed errors for API tests; fakeinfra message cites-source is the documented exception). Protovalidate-on-the-wire (STD-005) and Kind/shell/coverage gates remain aspirational.
 
 ---
 
@@ -671,5 +620,5 @@ Source: [Coding standards audit](300deec2-5ac1-45dd-9f29-5343ee5f18dd)
 1. **AuthN/AuthZ + network isolation** (SEC-001–003, SEC-006) block production trust.
 2. **Docs vs reality** (STD-001, STD-009–010, STYLE-012) confuse agents and humans — cheap high leverage.
 3. **`internal/servers` deepening** (SOLID-001–008) unlocks maintainability without changing the proto contract.
-4. **Protovalidate on the wire + verify≡CI** (STD-002, STD-005) close “written standard vs enforced” gaps.
+4. **Protovalidate on the wire** (STD-005) closes the remaining “written standard vs enforced” validation gap.
 5. **Style nits** (STYLE-001–011) are good follow-ons after docs/standards alignment.
