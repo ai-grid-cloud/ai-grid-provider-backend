@@ -66,7 +66,7 @@ func (s *SubscriptionsServer) gitList(ctx context.Context) ([]*aigridv1.Subscrip
 		if err != nil {
 			return nil, err
 		}
-		catalog.join(doc.sub)
+		catalog.join(ctx, doc.sub)
 		items = append(items, withSubscriptionPhase(doc.sub, active))
 	}
 	return items, nil
@@ -93,7 +93,7 @@ func (s *SubscriptionsServer) modelCatalog(head gitops.Snapshot) *modelCatalog {
 // The join only decorates refs, so a broken entry is logged, not returned:
 // it must not fail the subscriptions that name the model, or keep them from
 // being edited.
-func (c *modelCatalog) modelRef(id string) *unstructured.Unstructured {
+func (c *modelCatalog) modelRef(ctx context.Context, id string) *unstructured.Unstructured {
 	if entry, ok := c.entries[id]; ok {
 		return entry
 	}
@@ -119,7 +119,7 @@ func (c *modelCatalog) modelRef(id string) *unstructured.Unstructured {
 			return c.entries[id]
 		}
 	}
-	c.logger.Warn("read model catalog entry; its subscription refs are left without model_id", "model", id, "file", p, "error", err)
+	c.logger.WarnContext(ctx, "read model catalog entry; its subscription refs are left without model_id", "model", id, "file", p, "error", err)
 	return nil
 }
 
@@ -128,10 +128,10 @@ func (c *modelCatalog) modelRef(id string) *unstructured.Unstructured {
 // entry gets model_id, the model's id, and display_name and description from
 // that MaaSModelRef's annotations, which renderModelCatalog copies from the
 // model's. Any other ref gets none of them, whatever the caller sent.
-func (c *modelCatalog) join(sub *aigridv1.Subscription) {
+func (c *modelCatalog) join(ctx context.Context, sub *aigridv1.Subscription) {
 	for _, ref := range sub.GetSpec().GetModelRefs() {
 		ref.ModelId, ref.DisplayName, ref.Description = "", "", ""
-		entry := c.modelRef(ref.GetName())
+		entry := c.modelRef(ctx, ref.GetName())
 		namespace := ref.GetNamespace()
 		if namespace == "" {
 			namespace = c.namespace
@@ -155,7 +155,7 @@ func (s *SubscriptionsServer) gitGet(ctx context.Context, id string) (*aigridv1.
 	if err != nil {
 		return nil, err
 	}
-	s.modelCatalog(head).join(doc.sub)
+	s.modelCatalog(head).join(ctx, doc.sub)
 	resp := &aigridv1.SubscriptionsGetResponse{
 		Object:             withSubscriptionPhase(doc.sub, s.readReports(ctx, subscriptionsActiveCheck)),
 		ModelRegistrations: gitModelRegistrations(doc.sub, s.namespace, s.readReports(ctx, modelRefsReadyCheck)),
@@ -308,7 +308,7 @@ func (s *SubscriptionsServer) gitCreate(ctx context.Context, object *aigridv1.Su
 		return nil, err
 	}
 	// The commit changes no catalog entry, so the snapshot read still holds.
-	s.modelCatalog(head).join(doc.sub)
+	s.modelCatalog(head).join(ctx, doc.sub)
 	return &aigridv1.SubscriptionsCreateResponse{
 		Object:     withSubscriptionPhase(doc.sub, s.readReports(ctx, subscriptionsActiveCheck)),
 		AuthPolicy: withAuthPolicyStatus(doc.policy, s.readReports(ctx, authPoliciesActiveCheck)),
@@ -341,7 +341,7 @@ func (s *SubscriptionsServer) gitUpdate(ctx context.Context, req *aigridv1.Subsc
 	// A mask that names nothing the file stores changes nothing and commits
 	// nothing.
 	if !paths.labels && !paths.annotations && !paths.anySpec() {
-		s.modelCatalog(head).join(current.sub)
+		s.modelCatalog(head).join(ctx, current.sub)
 		return &aigridv1.SubscriptionsUpdateResponse{Object: withSubscriptionPhase(current.sub, s.readReports(ctx, subscriptionsActiveCheck))}, nil
 	}
 
@@ -370,7 +370,7 @@ func (s *SubscriptionsServer) gitUpdate(ctx context.Context, req *aigridv1.Subsc
 		return nil, err
 	}
 	// As in gitCreate.
-	s.modelCatalog(head).join(doc.sub)
+	s.modelCatalog(head).join(ctx, doc.sub)
 	return &aigridv1.SubscriptionsUpdateResponse{Object: withSubscriptionPhase(doc.sub, s.readReports(ctx, subscriptionsActiveCheck))}, nil
 }
 

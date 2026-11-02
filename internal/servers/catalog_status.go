@@ -148,7 +148,7 @@ func readReports(ctx context.Context, logger *slog.Logger, status catalogStatusR
 	}
 	reports, err := status.Read(ctx, policy, check)
 	if err != nil {
-		logger.Warn("read catalog status", "policy", policy, "check", check, "error", err)
+		logger.WarnContext(ctx, "read catalog status", "policy", policy, "check", check, "error", err)
 		return nil
 	}
 	return reports

@@ -297,7 +297,7 @@ func (s *ModelsServer) ingressClusters(ctx context.Context) []string {
 	}
 	items, err := s.listManagedClusters(ctx)
 	if err != nil {
-		s.logger.Warn("list ingress clusters for model status", "error", err)
+		s.logger.WarnContext(ctx, "list ingress clusters for model status", "error", err)
 		return nil
 	}
 	var names []string

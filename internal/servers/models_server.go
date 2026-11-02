@@ -455,7 +455,7 @@ func (s *ModelsServer) enrichGitLocations(ctx context.Context, models ...*aigrid
 	}
 	list, err := s.client.Resource(managedClustersResource).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		s.logger.Warn("list ManagedClusters for model locations", "error", err)
+		s.logger.WarnContext(ctx, "list ManagedClusters for model locations", "error", err)
 		return
 	}
 	byName := map[string]string{}

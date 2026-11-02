@@ -324,7 +324,7 @@ func readProvisioning(ctx context.Context, client dynamic.Interface, logger *slo
 	policy, err := client.Resource(policiesResource).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		if !apierrors.IsNotFound(err) {
-			logger.Warn("read ready policy", "policy", namespace+"/"+name, "error", err)
+			logger.WarnContext(ctx, "read ready policy", "policy", namespace+"/"+name, "error", err)
 		}
 		return map[string]string{}
 	}
