@@ -410,6 +410,18 @@ configures the backend with the development Keycloak admin credentials. Use a
 dedicated service account with organization manage/query roles instead of these
 credentials outside local testing.
 
+Optional `spec.identity_provider` on Create configures a realm OIDC IdP linked
+to the Organization and sets a hardcoded-attribute mapper so user attribute
+`maas_org_id` is the organization UUID (the realm client mapper emits claim
+`org_id`). The IdP is immutable after Create. Client secrets are **not** stored
+in the API: put them in namespace `ai-grid-idp-secrets` (env
+`AI_GRID_IDP_SECRET_NAMESPACE`) as a Secret whose name is
+`config.client_secret_secret_name` and whose key is `client-secret`. Do **not**
+put those Secrets in the backend namespace. The ServiceAccount may only `get`
+Secrets in that namespace. Production Keycloak credentials need
+`manage-organizations`, `manage-identity-providers`, and the matching view
+roles in addition to ordinary organization CRUD.
+
 ## Local architecture
 
 The local environment is Kubernetes-native:
