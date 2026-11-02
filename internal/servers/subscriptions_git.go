@@ -13,6 +13,7 @@ import (
 	connect "connectrpc.com/connect/v2"
 	aigridv1 "github.com/osac-project/ai-grid-provider-backend/gen/ai_grid/v1"
 	"github.com/osac-project/ai-grid-provider-backend/internal/gitops"
+	"github.com/osac-project/ai-grid-provider-backend/internal/names"
 	"google.golang.org/protobuf/proto"
 	apivalidation "k8s.io/apimachinery/pkg/api/validation"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -99,7 +100,7 @@ func (c *modelCatalog) modelRef(id string) *unstructured.Unstructured {
 	c.entries[id] = nil
 	// Only a model id names a catalog entry; a ref in a file edited by hand
 	// could hold anything, such as a path.
-	if !modelNameRE.MatchString(id) {
+	if !names.ValidDNSLabel(id) {
 		return nil
 	}
 	p := path.Join(modelCatalogGitDir(id), "model.yaml")
@@ -319,7 +320,7 @@ func (s *SubscriptionsServer) gitUpdate(ctx context.Context, req *aigridv1.Subsc
 	id := subscriptionID(object)
 	version := object.GetMetadata().GetVersion()
 	if req.GetLock() && version == 0 {
-		return nil, connect.NewError(connect.CodeInvalidArgument, "lock requires metadata.version")
+		return nil, connect.Errorf(connect.CodeInvalidArgument, "lock requires metadata.version")
 	}
 	paths, err := subscriptionUpdatePaths(req.GetUpdateMask(), object)
 	if err != nil {
@@ -491,9 +492,9 @@ func validateGitMetadata(meta *aigridv1.Metadata) error {
 func qualifiedOwnerGroups(spec *aigridv1.SubscriptionSpec) ([]string, error) {
 	org := spec.GetOrganization().GetId()
 	if org == "" {
-		return nil, connect.NewError(connect.CodeInvalidArgument, "spec.organization.id is required")
+		return nil, connect.Errorf(connect.CodeInvalidArgument, "spec.organization.id is required")
 	}
-	if !subscriptionNameRE.MatchString(org) {
+	if !names.ValidDNSLabel(org) {
 		return nil, connect.Errorf(connect.CodeInvalidArgument, "spec.organization.id %q is not a valid organization id", org)
 	}
 	groups := spec.GetOwner().GetGroups()
@@ -639,15 +640,5 @@ func unmarshalYAMLDocs(data []byte) ([]*unstructured.Unstructured, error) {
 }
 
 func subscriptionGitError(op, id string, err error) error {
-	switch {
-	case errors.Is(err, gitops.ErrNotFound):
-		return connect.Errorf(connect.CodeNotFound, "Subscription %q not found", id).WithCause(err)
-	case errors.Is(err, gitops.ErrConflict):
-		return staleSubscriptionError(op, id).WithCause(err)
-	case errors.Is(err, gitops.ErrNotConfigured):
-		// Not one subscription's problem, so the message names the API, not the id.
-		return connect.Errorf(connect.CodeFailedPrecondition, "Subscriptions: %v", err).WithCause(err)
-	default:
-		return connect.Errorf(connect.CodeUnavailable, "%s Subscription %q: git: %v", op, id, err).WithCause(err)
-	}
+	return mapGitopsError("Subscription", "Subscriptions", op, id, err, staleSubscriptionError)
 }

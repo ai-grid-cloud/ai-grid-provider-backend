@@ -1,11 +1,11 @@
 package servers
 
 import (
-	connect "connectrpc.com/connect/v2"
 	"context"
 	"fmt"
 	"log/slog"
 
+	connect "connectrpc.com/connect/v2"
 	aigridv1 "github.com/osac-project/ai-grid-provider-backend/gen/ai_grid/v1"
 	"github.com/osac-project/ai-grid-provider-backend/gen/ai_grid/v1/aigridv1connect"
 )
@@ -28,7 +28,7 @@ func NewAiGridServer() *AiGridServerBuilder {
 	return &AiGridServerBuilder{}
 }
 
-// SetLogger sets the logger. Optional; a default is used when unset.
+// SetLogger sets the logger. Optional; slog.Default() when unset.
 func (b *AiGridServerBuilder) SetLogger(logger *slog.Logger) *AiGridServerBuilder {
 	b.logger = logger
 	return b
