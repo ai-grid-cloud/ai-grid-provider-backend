@@ -495,6 +495,29 @@
         ]
       }
     },
+    "/api/v1/models:listServingOptions": {
+      "get": {
+        "summary": "Accelerator configurations a model can use. See\nModelsListServingOptionsResponse.",
+        "operationId": "Models_ListServingOptions",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ModelsListServingOptionsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "tags": [
+          "Models"
+        ]
+      }
+    },
     "/api/v1/ping": {
       "get": {
         "operationId": "AiGrid_Ping",
@@ -1092,6 +1115,29 @@
         }
       },
       "description": "AuthPolicyModelRef references a MaaSModelRef granted by an AuthPolicy."
+    },
+    "v1BaseRefOption": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The preset's full name, release prefix included (such as\nv3-6-0-kserve-config-llm-template-cpu): the value spec.base_refs takes."
+        },
+        "display_name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "accelerators": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Extended resources the preset needs on a node, such as nvidia.com/gpu\n(its opendatahub.io/recommended-accelerators). Empty: it runs on CPUs,\nand every cluster has it."
+        }
+      },
+      "description": "An accelerator configuration, a value of ModelSpec.base_refs: an OpenShift AI\naccelerator preset, an LLMInferenceServiceConfig in the clusters' OpenShift\nAI namespace labelled opendatahub.io/config-type=accelerator."
     },
     "v1BillingRate": {
       "type": "object",
@@ -2170,6 +2216,20 @@
           }
         }
       }
+    },
+    "v1ModelsListServingOptionsResponse": {
+      "type": "object",
+      "properties": {
+        "base_refs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1BaseRefOption"
+          },
+          "description": "The values a model's spec.base_refs can take: the accelerator\nconfigurations."
+        }
+      },
+      "description": "Response of ListServingOptions: the accelerator configurations a model can\nuse. The backend reads them on every call from two ConfigMaps on the hub:\nthe defaults the console's Helm chart ships (OpenShift AI's presets) and an\noptional custom one the provider admin owns, whose entries replace or add\nto the defaults by name. The list is the same for every cluster, and the\nbackend doesn't read the clusters: OpenShift AI installs on each cluster\nonly the accelerator presets its nodes can run, so a model that names a GPU\npreset fails on a cluster without that accelerator, and its status says so.\nWithout a configured list it's empty."
     },
     "v1ModelsUpdateResponse": {
       "type": "object",

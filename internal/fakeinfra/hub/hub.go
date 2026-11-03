@@ -57,6 +57,8 @@ type Hub struct {
 	start       time.Time
 	clock       func() time.Time
 	logger      *slog.Logger
+	// configMapDir is where ConfigMaps are read from (configmaps.go).
+	configMapDir string
 	// nodes are what the fake Search indexes (search.go).
 	nodes []SearchNode
 }
@@ -163,6 +165,7 @@ func (h *Hub) Handler() http.Handler {
 	mux.HandleFunc("PATCH "+managedClustersPath+"/{name}", h.patch)
 	mux.HandleFunc("DELETE "+managedClustersPath+"/{name}", h.delete)
 	mux.HandleFunc("GET "+policiesPath+"/{namespace}/policies/{name}", h.getPolicy)
+	mux.HandleFunc("GET "+configMapsPath, h.getConfigMap)
 	h.registerMAAS(mux)
 	h.registerModels(mux)
 	mux.HandleFunc("POST "+SearchPath, h.search)

@@ -36,6 +36,7 @@ type ModelsServerBuilder struct {
 	namespace             string
 	subscriptionNamespace string
 	readyPolicy           string
+	servingOptions        servingOptionsSource
 }
 
 // ModelsServer implements ai_grid.v1.Models over a Git repository: each model
@@ -56,6 +57,7 @@ type ModelsServer struct {
 	subscriptionNamespace string
 	readyPolicyNamespace  string
 	readyPolicyName       string
+	servingOptions        servingOptionsSource
 }
 
 var _ aigridv1connect.ModelsHandler = (*ModelsServer)(nil)
@@ -117,7 +119,28 @@ func (b *ModelsServerBuilder) SetSubscriptionNamespace(namespace string) *Models
 	return b
 }
 
-// Build creates the ModelsServer.
+// SetServingOptions sets a fixed list of accelerator configurations, for
+// tests. See SetServingOptionsSource.
+func (b *ModelsServerBuilder) SetServingOptions(options *ServingOptions) *ModelsServerBuilder {
+	b.servingOptions = nil
+	if options != nil {
+		b.servingOptions = staticServingOptions{options}
+	}
+	return b
+}
+
+// SetServingOptionsSource sets where the accelerator configurations come
+// from: the list ListServingOptions answers and that a model's spec.base_refs
+// are checked against, read on every call. Optional; without it the list is
+// empty and base_refs aren't checked.
+func (b *ModelsServerBuilder) SetServingOptionsSource(source *ConfigMapServingOptions) *ModelsServerBuilder {
+	b.servingOptions = nil
+	if source != nil {
+		b.servingOptions = source
+	}
+	return b
+}
+
 // SetReadyPolicy sets the hub Policy, as namespace/name, whose compliance says
 // a cluster is provisioned. Optional; DefaultReadyPolicy when empty.
 func (b *ModelsServerBuilder) SetReadyPolicy(namespacedName string) *ModelsServerBuilder {
@@ -125,6 +148,7 @@ func (b *ModelsServerBuilder) SetReadyPolicy(namespacedName string) *ModelsServe
 	return b
 }
 
+// Build creates the ModelsServer.
 func (b *ModelsServerBuilder) Build() (*ModelsServer, error) {
 	if b.writer == nil {
 		return nil, errors.New("git writer is mandatory")
@@ -159,6 +183,7 @@ func (b *ModelsServerBuilder) Build() (*ModelsServer, error) {
 		gridNamespace:         gridNS,
 		namespace:             namespace,
 		subscriptionNamespace: subNS,
+		servingOptions:        b.servingOptions,
 	}, nil
 }
 
@@ -214,6 +239,9 @@ func (s *ModelsServer) Create(ctx context.Context, req *aigridv1.ModelsCreateReq
 		return nil, err
 	}
 	if err := normalizeServedName(id, object.GetSpec()); err != nil {
+		return nil, err
+	}
+	if err := s.checkServingOptions(ctx, object.GetSpec(), nil); err != nil {
 		return nil, err
 	}
 	var m *aigridv1.Model
@@ -315,6 +343,42 @@ func (s *ModelsServer) ListPlacementClusters(ctx context.Context, _ *aigridv1.Mo
 		return nil, err
 	}
 	return &aigridv1.ModelsListPlacementClustersResponse{Clusters: names}, nil
+}
+
+// ListServingOptions answers the accelerator configurations, the same for
+// every cluster.
+func (s *ModelsServer) ListServingOptions(ctx context.Context, _ *aigridv1.ModelsListServingOptionsRequest) (*aigridv1.ModelsListServingOptionsResponse, error) {
+	options, err := s.loadServingOptions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return options.toProto(), nil
+}
+
+// loadServingOptions reads the current list; nil without a source.
+func (s *ModelsServer) loadServingOptions(ctx context.Context) (*ServingOptions, error) {
+	if s.servingOptions == nil {
+		return nil, nil
+	}
+	return s.servingOptions.load(ctx)
+}
+
+// checkServingOptions checks spec.base_refs against the serving options list.
+// A name the model already has (current, nil on Create) is kept even when the
+// list no longer has it, so a model made with an older release's preset can
+// still be edited. Without a list, base_refs aren't checked.
+func (s *ModelsServer) checkServingOptions(ctx context.Context, spec, current *aigridv1.ModelSpec) error {
+	options, err := s.loadServingOptions(ctx)
+	if err != nil || options == nil {
+		return err
+	}
+	for i, ref := range spec.GetBaseRefs() {
+		if !options.baseRef(ref) && !slices.Contains(current.GetBaseRefs(), ref) {
+			return connect.Errorf(connect.CodeInvalidArgument,
+				"spec.base_refs[%d] %q is not an accelerator configuration this backend offers (Models/ListServingOptions)", i, ref)
+		}
+	}
+	return nil
 }
 
 // ListLocations is the deprecated name of ListPlacementClusters: the same

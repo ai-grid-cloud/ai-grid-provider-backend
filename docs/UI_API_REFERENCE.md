@@ -45,6 +45,7 @@ unwraps them via `response_body: "object"`.
 | `GET` | `/api/v1/models` | List models (from the Git catalog) |
 | `GET` | `/api/v1/models:listPlacementClusters` | Unique sorted names of the provisioned, Available inference and combined clusters (`clusters`) |
 | `GET` | `/api/v1/models:listLocations` | Deprecated: the same cluster names as `locations`; use `:listPlacementClusters` |
+| `GET` | `/api/v1/models:listServingOptions` | Accelerator configurations a model can use (`base_refs`) |
 | `GET` | `/api/v1/models/{id}` | Get one model |
 | `POST` | `/api/v1/models` | Create model (commits it to Git) |
 | `PATCH` | `/api/v1/models/{id}` | Update model (FieldMask) |
@@ -573,11 +574,29 @@ name with no whitespace; an empty one is `InvalidArgument`. Labels and
 annotations take only unprefixed keys plus `openshift.io/display-name` and
 `openshift.io/description`.
 
+`:listServingOptions` lists the accelerator configurations a model can use:
+OpenShift AI accelerator presets, by the full name `spec.base_refs` takes. It's
+one list for every cluster; the backend doesn't read the clusters. It reads two
+ConfigMaps on the hub on every call, so an edit applies without a restart: the
+defaults (`AI_GRID_SERVING_OPTIONS_CONFIGMAP`, owned by the console's Helm chart)
+and an optional custom list (`AI_GRID_SERVING_OPTIONS_CUSTOM_CONFIGMAP`, owned by
+the provider admin; the chart never creates it), both in
+`AI_GRID_SERVING_OPTIONS_NAMESPACE` under the data key `serving-options.yaml`. A
+custom entry replaces the default of the same name, and any other custom entry
+is added. A custom ConfigMap the backend can't read or parse is logged and
+ignored; a missing or invalid defaults ConfigMap fails the call. With a list,
+each `spec.base_refs` item must be on it, or already be the model's own (so a
+model keeps an older release's preset), or the call is `InvalidArgument`.
+Without a list, `base_refs` aren't checked. OpenShift AI installs only the
+presets a cluster's nodes can run, so a GPU preset on a cluster without that
+accelerator leaves the model not ready there.
+
 | Method | Path | Notes |
 | --- | --- | --- |
 | GET | `/api/v1/models` | List; CEL `filter`; `order` allowlist `id`, `-id`, `metadata.name`, `-metadata.name` |
 | GET | `/api/v1/models:listPlacementClusters` | `clusters`: unique sorted names of the provisioned (ai-grid-ready Compliant), Available inference and combined clusters, the values `spec.placement` takes (P7) |
 | GET | `/api/v1/models:listLocations` | Deprecated: the same cluster names, as `locations`. Use `:listPlacementClusters`; removed once clients have moved |
+| GET | `/api/v1/models:listServingOptions` | `base_refs`, the accelerator configurations, from the serving options ConfigMaps; empty without `AI_GRID_SERVING_OPTIONS_CONFIGMAP` |
 | GET | `/api/v1/models/{id}` | Get one (unwraps to the Model object); `status.placement` when placed: `selected_clusters` (cluster names) and `locations` (their `location` labels, P8) |
 | POST | `/api/v1/models` | Create (= deploy); body is the Model object |
 | PATCH | `/api/v1/models/{id}` | FieldMask update (`metadata.labels`, `metadata.annotations`, `spec.model`, `spec.replicas`, `spec.base_refs`, `spec.runtime`, `spec.router`, `spec.main`, `spec.main.image`, `spec.main.env`, `spec.main.requests`, `spec.main.limits`, `spec.scaling`, `spec.placement`, `spec.rollout`). Each path replaces its field whole; a subpath such as `metadata.labels.<key>` replaces the whole map. `ModelsUpdateRequest.update_mask` has the full rules |
@@ -664,7 +683,7 @@ delivered). Gateway defaults to
 subscriptions show on their model refs. A subscription's model ref names this
 model when its `model_id` equals the model's `id` (section 5).
 
-gRPC: `ai_grid.v1.Models/{List,Get,Create,Update,Delete,ListPlacementClusters}`,
+gRPC: `ai_grid.v1.Models/{List,Get,Create,Update,Delete,ListPlacementClusters,ListServingOptions}`,
 and the deprecated `ai_grid.v1.Models/ListLocations`.
 
 ---

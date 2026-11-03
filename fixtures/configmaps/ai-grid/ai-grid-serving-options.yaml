@@ -1,0 +1,25 @@
+# The defaults ConfigMap make dev-fake serves (hack/dev-fake.sh,
+# AI_GRID_SERVING_OPTIONS_CONFIGMAP): OpenShift AI 3.6's defaults, copied by hand from what the
+# console's Helm chart renders (ai-grid-provider-console charts/ai-grid-provider-console/values.yaml,
+# servingOptions, which cites the sources). Nothing checks the copy: refresh it when the chart's
+# defaults change. The fake hub reads this file on every GET, so an edit applies without a restart.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ai-grid-serving-options
+  namespace: ai-grid
+data:
+  serving-options.yaml: |
+    baseRefs:
+    - name: v3-6-0-kserve-config-llm-template-cpu
+      displayName: vLLM CPU
+      description: Runs on CPUs. Reserves 4 GiB of memory for the KV cache, so choose at least 8 GiB.
+      accelerators: []
+    - name: v3-6-0-kserve-config-llm-single-node-template-nvidia-cuda
+      displayName: vLLM NVIDIA GPU
+      description: Runs on NVIDIA GPUs, one node per replica.
+      accelerators: [nvidia.com/gpu]
+    - name: v3-6-0-kserve-config-llm-template-amd-rocm
+      displayName: vLLM AMD GPU
+      description: Runs on AMD GPUs.
+      accelerators: [amd.com/gpu]

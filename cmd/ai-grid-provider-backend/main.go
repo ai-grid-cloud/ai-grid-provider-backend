@@ -106,6 +106,25 @@ func main() {
 	}
 	status := servers.NewCatalogStatusReader(kubeClient, getEnv("AI_GRID_POLICY_NAMESPACE", servers.DefaultPolicyNamespace))
 	subscriptionNamespace := getEnv("AI_GRID_SUBSCRIPTION_NAMESPACE", "models-as-a-service")
+	// The accelerator configurations the wizard offers, read on every
+	// call from two ConfigMaps on the hub: the console chart's defaults and the
+	// provider admin's custom list. Unset: no list (Models/ListServingOptions).
+	var servingOptions *servers.ConfigMapServingOptions
+	if name := os.Getenv("AI_GRID_SERVING_OPTIONS_CONFIGMAP"); name != "" {
+		namespace := os.Getenv("AI_GRID_SERVING_OPTIONS_NAMESPACE")
+		if namespace == "" {
+			fmt.Fprintln(os.Stderr, "serving options: AI_GRID_SERVING_OPTIONS_NAMESPACE is required with AI_GRID_SERVING_OPTIONS_CONFIGMAP")
+			os.Exit(1)
+		}
+		servingOptions = &servers.ConfigMapServingOptions{
+			Client:    kubeClient,
+			Namespace: namespace,
+			Defaults:  name,
+			Custom:    os.Getenv("AI_GRID_SERVING_OPTIONS_CUSTOM_CONFIGMAP"),
+		}
+	} else {
+		slog.Warn("AI_GRID_SERVING_OPTIONS_CONFIGMAP is unset: no accelerator configurations to offer, and spec.base_refs isn't checked")
+	}
 	modelsServer, err := servers.NewModelsServer().
 		SetWriter(writer).
 		SetCatalogStatus(status).
@@ -114,6 +133,7 @@ func main() {
 		SetSubscriptionNamespace(subscriptionNamespace).
 		SetGridNamespace(getEnv("AI_GRID_GRID_NAMESPACE", "redhat-ai-grid")).
 		SetReadyPolicy(getEnv("AI_GRID_READY_POLICY", servers.DefaultReadyPolicy)).
+		SetServingOptionsSource(servingOptions).
 		Build()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "build Models server: %v\n", err)

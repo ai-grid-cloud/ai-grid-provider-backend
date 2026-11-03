@@ -18,6 +18,9 @@ DEV_DRAFT_PORT="${DEV_DRAFT_PORT:-9094}"
 DEV_DRAFT_ADDRESS="${DEV_DRAFT_ADDRESS-$DEV_HOST:$DEV_DRAFT_PORT}"
 DEV_FIXTURES="${DEV_FIXTURES:-fixtures/default}"
 DEV_DRAFT_FIXTURES="${DEV_DRAFT_FIXTURES:-fixtures/draft/default}"
+# ConfigMaps the fake hub serves, read on every request: the serving options
+# defaults and, when you add one, the custom list (fixtures/configmaps/README.md).
+DEV_CONFIGMAPS="${DEV_CONFIGMAPS:-fixtures/configmaps}"
 DEV_KUBECONFIG="${DEV_KUBECONFIG:-bin/fake-kubeconfig}"
 # The fake hub's CA, which also signs the fake ACM Search on the hub's port.
 DEV_HUB_CA="${DEV_HUB_CA:-bin/fake-hub-ca.crt}"
@@ -72,6 +75,7 @@ fi
   --keycloak-address "$DEV_HOST:$DEV_KEYCLOAK_PORT" \
   --draft-address "$DEV_DRAFT_ADDRESS" \
   --draft-fixtures "$DEV_DRAFT_FIXTURES" \
+  --configmaps "$DEV_CONFIGMAPS" \
   --kubeconfig-out "$DEV_KUBECONFIG" \
   --hub-ca-out "$DEV_HUB_CA" \
   --keycloak-admin-realm "$KC_ADMIN_REALM" \
@@ -100,6 +104,9 @@ KEYCLOAK_REALM="$KC_REALM" \
 KEYCLOAK_ADMIN_USERNAME="$KC_ADMIN_USERNAME" \
 KEYCLOAK_ADMIN_PASSWORD="$KC_ADMIN_PASSWORD" \
 AI_GRID_GIT_URL="$AI_GRID_GIT_URL" \
+AI_GRID_SERVING_OPTIONS_NAMESPACE=ai-grid \
+AI_GRID_SERVING_OPTIONS_CONFIGMAP=ai-grid-serving-options \
+AI_GRID_SERVING_OPTIONS_CUSTOM_CONFIGMAP=ai-grid-serving-options-custom \
 "$BACKEND_BIN" \
   --listen-address "$DEV_HOST:$DEV_GRPC_PORT" \
   --http-listen-address "$DEV_HOST:$DEV_HTTP_PORT" \
@@ -116,6 +123,7 @@ dev-fake: fixtures $DEV_FIXTURES, draft fixtures $DEV_DRAFT_FIXTURES
                     http://$DEV_HOST:$DEV_HUB_PORT for the console BFF (same port)
   fake Keycloak     http://$DEV_HOST:$DEV_KEYCLOAK_PORT
   catalog (Git)     $AI_GRID_GIT_URL  (make dev-catalog-log; make dev-catalog-reset starts over)
+  ConfigMaps        $DEV_CONFIGMAPS/NAMESPACE/NAME.yaml (serving options; edits apply at once)
   fake ACM Search   https://$DEV_HOST:$DEV_HUB_PORT/searchapi/graphql (cluster GPUs, from searchnodes.json)
   draft API (fake)  ${DEV_DRAFT_ADDRESS:-off}  gRPC ai_grid.draft.v1, own state from $DEV_DRAFT_FIXTURES
 Press Ctrl-C to stop both.

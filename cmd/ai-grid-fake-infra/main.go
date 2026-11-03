@@ -39,6 +39,7 @@ func main() {
 	hubAddress := flag.String("hub-address", "127.0.0.1:9091", "fake hub API listen address")
 	keycloakAddress := flag.String("keycloak-address", "127.0.0.1:9093", "fake Keycloak listen address")
 	draftAddress := flag.String("draft-address", "127.0.0.1:9094", "gRPC listen address of the fake ai_grid.draft.v1 services; empty disables them")
+	configMaps := flag.String("configmaps", "fixtures/configmaps", "directory the fake hub serves ConfigMaps from, as NAMESPACE/NAME.yaml, read on every request; empty serves none")
 	draftFixtures := flag.String("draft-fixtures", "fixtures/draft/default", "fixtures directory of the draft fake (fixtures/draft/default or fixtures/draft/poc)")
 	kubeconfigOut := flag.String("kubeconfig-out", "bin/fake-kubeconfig", "where to write the kubeconfig for the backend's --kubeconfig")
 	hubCAOut := flag.String("hub-ca-out", "bin/fake-hub-ca.crt", "where to write the fake hub's CA certificate, for the backend's --search-ca-file (the fake Search shares the hub's port); empty writes none")
@@ -58,7 +59,7 @@ func main() {
 
 	if err := run(logger, config{
 		fixtures: *fixtures, hubAddress: *hubAddress, keycloakAddress: *keycloakAddress, kubeconfigOut: *kubeconfigOut, hubCAOut: *hubCAOut,
-		draftAddress: *draftAddress, draftFixtures: *draftFixtures,
+		draftAddress: *draftAddress, draftFixtures: *draftFixtures, configMaps: *configMaps,
 		keycloak: keycloak.Config{AdminRealm: *adminRealm, Realm: *realm, Username: *username, Password: *password},
 	}); err != nil {
 		logger.Error("ai-grid-fake-infra failed", slog.Any("error", err))
@@ -83,6 +84,7 @@ type config struct {
 	hubCAOut        string
 	draftAddress    string
 	draftFixtures   string
+	configMaps      string
 	keycloak        keycloak.Config
 }
 
@@ -91,7 +93,7 @@ func run(logger *slog.Logger, cfg config) error {
 	if err != nil {
 		return fmt.Errorf("load hub fixtures: %w", err)
 	}
-	fakeHub, err := hub.New(hubFixtures, hub.WithLogger(logger.With("component", "hub")))
+	fakeHub, err := hub.New(hubFixtures, hub.WithLogger(logger.With("component", "hub")), hub.WithConfigMapDir(cfg.configMaps))
 	if err != nil {
 		return fmt.Errorf("build fake hub: %w", err)
 	}

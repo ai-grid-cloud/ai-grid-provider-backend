@@ -104,6 +104,42 @@ message ModelsListPlacementClustersResponse {
   repeated string clusters = 1;
 }
 
+// Request of ListServingOptions. Empty.
+message ModelsListServingOptionsRequest {}
+
+// Response of ListServingOptions: the accelerator configurations a model can
+// use. The backend reads them on every call from two ConfigMaps on the hub:
+// the defaults the console's Helm chart ships (OpenShift AI's presets) and an
+// optional custom one the provider admin owns, whose entries replace or add
+// to the defaults by name. The list is the same for every cluster, and the
+// backend doesn't read the clusters: OpenShift AI installs on each cluster
+// only the accelerator presets its nodes can run, so a model that names a GPU
+// preset fails on a cluster without that accelerator, and its status says so.
+// Without a configured list it's empty.
+message ModelsListServingOptionsResponse {
+  // The values a model's spec.base_refs can take: the accelerator
+  // configurations.
+  repeated BaseRefOption base_refs = 1;
+}
+
+// An accelerator configuration, a value of ModelSpec.base_refs: an OpenShift AI
+// accelerator preset, an LLMInferenceServiceConfig in the clusters' OpenShift
+// AI namespace labelled opendatahub.io/config-type=accelerator.
+message BaseRefOption {
+  // The preset's full name, release prefix included (such as
+  // v3-6-0-kserve-config-llm-template-cpu): the value spec.base_refs takes.
+  string name = 1;
+
+  string display_name = 2;
+
+  string description = 3;
+
+  // Extended resources the preset needs on a node, such as nvidia.com/gpu
+  // (its opendatahub.io/recommended-accelerators). Empty: it runs on CPUs,
+  // and every cluster has it.
+  repeated string accelerators = 4;
+}
+
 // Models manage LLMInferenceService deployments in the backend's Git catalog,
 // placed on clusters by name. Create also writes the ExternalModel and
 // MaaSModelRef that register the model on the ingress clusters.
@@ -159,5 +195,11 @@ service Models {
   // `name In [...]` takes.
   rpc ListPlacementClusters(ModelsListPlacementClustersRequest) returns (ModelsListPlacementClustersResponse) {
     option (google.api.http) = {get: "/api/v1/models:listPlacementClusters"};
+  }
+
+  // Accelerator configurations a model can use. See
+  // ModelsListServingOptionsResponse.
+  rpc ListServingOptions(ModelsListServingOptionsRequest) returns (ModelsListServingOptionsResponse) {
+    option (google.api.http) = {get: "/api/v1/models:listServingOptions"};
   }
 }

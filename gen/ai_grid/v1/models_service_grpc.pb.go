@@ -26,6 +26,7 @@ const (
 	Models_Delete_FullMethodName                = "/ai_grid.v1.Models/Delete"
 	Models_ListLocations_FullMethodName         = "/ai_grid.v1.Models/ListLocations"
 	Models_ListPlacementClusters_FullMethodName = "/ai_grid.v1.Models/ListPlacementClusters"
+	Models_ListServingOptions_FullMethodName    = "/ai_grid.v1.Models/ListServingOptions"
 )
 
 // ModelsClient is the client API for Models service.
@@ -57,6 +58,9 @@ type ModelsClient interface {
 	// Policy (AI_GRID_READY_POLICY). These are the values a placement's
 	// `name In [...]` takes.
 	ListPlacementClusters(ctx context.Context, in *ModelsListPlacementClustersRequest, opts ...grpc.CallOption) (*ModelsListPlacementClustersResponse, error)
+	// Accelerator configurations a model can use. See
+	// ModelsListServingOptionsResponse.
+	ListServingOptions(ctx context.Context, in *ModelsListServingOptionsRequest, opts ...grpc.CallOption) (*ModelsListServingOptionsResponse, error)
 }
 
 type modelsClient struct {
@@ -138,6 +142,16 @@ func (c *modelsClient) ListPlacementClusters(ctx context.Context, in *ModelsList
 	return out, nil
 }
 
+func (c *modelsClient) ListServingOptions(ctx context.Context, in *ModelsListServingOptionsRequest, opts ...grpc.CallOption) (*ModelsListServingOptionsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ModelsListServingOptionsResponse)
+	err := c.cc.Invoke(ctx, Models_ListServingOptions_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ModelsServer is the server API for Models service.
 // All implementations must embed UnimplementedModelsServer
 // for forward compatibility.
@@ -167,6 +181,9 @@ type ModelsServer interface {
 	// Policy (AI_GRID_READY_POLICY). These are the values a placement's
 	// `name In [...]` takes.
 	ListPlacementClusters(context.Context, *ModelsListPlacementClustersRequest) (*ModelsListPlacementClustersResponse, error)
+	// Accelerator configurations a model can use. See
+	// ModelsListServingOptionsResponse.
+	ListServingOptions(context.Context, *ModelsListServingOptionsRequest) (*ModelsListServingOptionsResponse, error)
 	mustEmbedUnimplementedModelsServer()
 }
 
@@ -197,6 +214,9 @@ func (UnimplementedModelsServer) ListLocations(context.Context, *ModelsListLocat
 }
 func (UnimplementedModelsServer) ListPlacementClusters(context.Context, *ModelsListPlacementClustersRequest) (*ModelsListPlacementClustersResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListPlacementClusters not implemented")
+}
+func (UnimplementedModelsServer) ListServingOptions(context.Context, *ModelsListServingOptionsRequest) (*ModelsListServingOptionsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListServingOptions not implemented")
 }
 func (UnimplementedModelsServer) mustEmbedUnimplementedModelsServer() {}
 func (UnimplementedModelsServer) testEmbeddedByValue()                {}
@@ -345,6 +365,24 @@ func _Models_ListPlacementClusters_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Models_ListServingOptions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ModelsListServingOptionsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ModelsServer).ListServingOptions(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Models_ListServingOptions_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ModelsServer).ListServingOptions(ctx, req.(*ModelsListServingOptionsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Models_ServiceDesc is the grpc.ServiceDesc for Models service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -379,6 +417,10 @@ var Models_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListPlacementClusters",
 			Handler:    _Models_ListPlacementClusters_Handler,
+		},
+		{
+			MethodName: "ListServingOptions",
+			Handler:    _Models_ListServingOptions_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -171,6 +171,9 @@ func (s *ModelsServer) gitUpdate(ctx context.Context, req *aigridv1.ModelsUpdate
 	if err := normalizeServedName(id, merged.GetSpec()); err != nil {
 		return nil, err
 	}
+	if err := s.checkServingOptions(ctx, merged.GetSpec(), current.model.GetSpec()); err != nil {
+		return nil, err
+	}
 	clusters, err := gitPlacementClusters(merged.GetSpec())
 	if err != nil {
 		return nil, err

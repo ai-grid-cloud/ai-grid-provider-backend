@@ -39,6 +39,8 @@ const (
 	// ModelsListPlacementClustersProcedure is the procedure name of the Models's ListPlacementClusters
 	// RPC.
 	ModelsListPlacementClustersProcedure = "/ai_grid.v1.Models/ListPlacementClusters"
+	// ModelsListServingOptionsProcedure is the procedure name of the Models's ListServingOptions RPC.
+	ModelsListServingOptionsProcedure = "/ai_grid.v1.Models/ListServingOptions"
 )
 
 var (
@@ -91,6 +93,13 @@ var (
 			Procedure:  ModelsListPlacementClustersProcedure,
 		}
 	})
+	modelsListServingOptionsSpec = sync.OnceValue(func() connect.Spec {
+		return connect.Spec{
+			StreamType: connect.StreamTypeUnary,
+			Schema:     v1.File_ai_grid_v1_models_service_proto.Services().ByName("Models").Methods().ByName("ListServingOptions"),
+			Procedure:  ModelsListServingOptionsProcedure,
+		}
+	})
 )
 
 // ModelsClient is a client for the ai_grid.v1.Models service.
@@ -117,6 +126,9 @@ type ModelsClient interface {
 	// Policy (AI_GRID_READY_POLICY). These are the values a placement's
 	// `name In [...]` takes.
 	ListPlacementClusters(context.Context, *v1.ModelsListPlacementClustersRequest) (*v1.ModelsListPlacementClustersResponse, error)
+	// Accelerator configurations a model can use. See
+	// ModelsListServingOptionsResponse.
+	ListServingOptions(context.Context, *v1.ModelsListServingOptionsRequest) (*v1.ModelsListServingOptionsResponse, error)
 }
 
 // NewModelsClient constructs a client for the ai_grid.v1.Models service. Multiple service clients
@@ -149,6 +161,9 @@ type ModelsHandler interface {
 	// Policy (AI_GRID_READY_POLICY). These are the values a placement's
 	// `name In [...]` takes.
 	ListPlacementClusters(context.Context, *v1.ModelsListPlacementClustersRequest) (*v1.ModelsListPlacementClustersResponse, error)
+	// Accelerator configurations a model can use. See
+	// ModelsListServingOptionsResponse.
+	ListServingOptions(context.Context, *v1.ModelsListServingOptionsRequest) (*v1.ModelsListServingOptionsResponse, error)
 }
 
 // RegisterModelsHandler registers svc as the ai_grid.v1.Models implementation on server.
@@ -162,6 +177,7 @@ func RegisterModelsHandler(server *connect.Server, svc ModelsHandler) {
 		connect.Method{Spec: modelsDeleteSpec(), Handler: adapter.delete},
 		connect.Method{Spec: modelsListLocationsSpec(), Handler: adapter.listLocations},
 		connect.Method{Spec: modelsListPlacementClustersSpec(), Handler: adapter.listPlacementClusters},
+		connect.Method{Spec: modelsListServingOptionsSpec(), Handler: adapter.listServingOptions},
 	)
 }
 
@@ -194,6 +210,10 @@ func (UnimplementedModelsHandler) ListLocations(context.Context, *v1.ModelsListL
 
 func (UnimplementedModelsHandler) ListPlacementClusters(context.Context, *v1.ModelsListPlacementClustersRequest) (*v1.ModelsListPlacementClustersResponse, error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, "ai_grid.v1.Models.ListPlacementClusters is not implemented")
+}
+
+func (UnimplementedModelsHandler) ListServingOptions(context.Context, *v1.ModelsListServingOptionsRequest) (*v1.ModelsListServingOptionsResponse, error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, "ai_grid.v1.Models.ListServingOptions is not implemented")
 }
 
 type modelsClient struct {
@@ -251,6 +271,14 @@ func (c *modelsClient) ListLocations(ctx context.Context, req *v1.ModelsListLoca
 func (c *modelsClient) ListPlacementClusters(ctx context.Context, req *v1.ModelsListPlacementClustersRequest) (*v1.ModelsListPlacementClustersResponse, error) {
 	var res v1.ModelsListPlacementClustersResponse
 	if err := c.client.CallUnary(ctx, modelsListPlacementClustersSpec(), req, &res); err != nil {
+		return nil, err
+	}
+	return &res, nil
+}
+
+func (c *modelsClient) ListServingOptions(ctx context.Context, req *v1.ModelsListServingOptionsRequest) (*v1.ModelsListServingOptionsResponse, error) {
+	var res v1.ModelsListServingOptionsResponse
+	if err := c.client.CallUnary(ctx, modelsListServingOptionsSpec(), req, &res); err != nil {
 		return nil, err
 	}
 	return &res, nil
@@ -336,6 +364,18 @@ func (h modelsHandler) listPlacementClusters(ctx context.Context, _ connect.Spec
 		return err
 	}
 	res, err := h.svc.ListPlacementClusters(ctx, &req)
+	if err != nil {
+		return err
+	}
+	return stream.Send(res)
+}
+
+func (h modelsHandler) listServingOptions(ctx context.Context, _ connect.Spec, stream connect.ServerStream) error {
+	var req v1.ModelsListServingOptionsRequest
+	if err := stream.Receive(&req); err != nil {
+		return err
+	}
+	res, err := h.svc.ListServingOptions(ctx, &req)
 	if err != nil {
 		return err
 	}
