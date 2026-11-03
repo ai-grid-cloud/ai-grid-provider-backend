@@ -233,7 +233,11 @@ func (s *ModelsServer) gitCommitModel(ctx context.Context, head gitops.Snapshot,
 	id := object.GetId()
 	change := gitops.Change{Put: map[string][]byte{}, Message: "models: " + op + " " + id}
 
-	deployment, err := s.renderModelDeployment(object, version, to)
+	previous, err := previousLLMInferenceService(head, id)
+	if err != nil {
+		return nil, modelGitError(op, id, err)
+	}
+	deployment, err := s.renderModelDeployment(object, version, to, previous)
 	if err != nil {
 		return nil, connect.Errorf(connect.CodeInternal, "render model %q: %v", id, err).WithCause(err)
 	}
@@ -424,12 +428,37 @@ func clusterReports(hasInference, inference, isIngress, hasIngress, ingress bool
 	return strings.ToUpper(message[:1]) + message[1:]
 }
 
+// previousLLMInferenceService returns the model's LLMInferenceService as Git
+// has it, or nil when the model has no deployment file yet.
+func previousLLMInferenceService(head gitops.Snapshot, id string) (map[string]interface{}, error) {
+	data, err := head.Read(path.Join(modelDeploymentGitDir(id), "deployment.yaml"))
+	if errors.Is(err, gitops.ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	docs, err := unmarshalYAMLDocs(data)
+	if err != nil {
+		return nil, err
+	}
+	if kind := docs[0].GetKind(); kind != llmInferenceKind {
+		return nil, fmt.Errorf("first document is %q, want %s", kind, llmInferenceKind)
+	}
+	return docs[0].Object, nil
+}
+
 // renderModelDeployment renders the inference side: the LLMInferenceService,
 // with the version and clusters annotations, and a NetworkPolicy that lets
-// the grid reach the model's workload and scheduler metrics.
-func (s *ModelsServer) renderModelDeployment(object *aigridv1.Model, version int32, clusters []string) ([]byte, error) {
+// the grid reach the model's workload and scheduler metrics. When previous,
+// the LLMInferenceService in Git, is set, the fields the API doesn't own keep
+// their values from it (keepUnmodeledFields).
+func (s *ModelsServer) renderModelDeployment(object *aigridv1.Model, version int32, clusters []string, previous map[string]interface{}) ([]byte, error) {
 	id := object.GetId()
 	llm := llmInferenceServiceFromModel(object, s.namespace)
+	if previous != nil {
+		llm.Object = keepUnmodeledFields(previous, llm.Object)
+	}
 	annotations := llm.GetAnnotations()
 	if annotations == nil {
 		annotations = map[string]string{}
