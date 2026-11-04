@@ -296,6 +296,16 @@ For subscriptions:
   and MaaS revokes the keys. An update keeps any other sync option the file
   has and replaces any other `Delete` option. Reads don't return the
   annotation.
+- A catalog written before the backend added the option gets it on each
+  subscription's next update. To add it to every subscription at once, run
+  `hack/add-subscription-delete-false.sh <catalog checkout>`, then review,
+  commit and push. The script changes only the `MaaSSubscription` documents,
+  and running it again changes nothing. Argo CD reads `Delete=false` from the
+  object on the cluster, not from Git, when it deletes an Application: until
+  a cluster's `acm-models-catalog-subscriptions-<cluster>` Application has
+  synced the change, removing that cluster from the grid still revokes the
+  keys. So after pushing, wait until every ingress cluster's Application is
+  `Synced` at that commit before removing any cluster.
 - `Delete=false` covers a cluster leaving the grid, not a role change. A
   change to the `inference` role turns MaaS off on the cluster, which deletes
   its `AITenant`, and deleting an `AITenant` revokes every API key of that
