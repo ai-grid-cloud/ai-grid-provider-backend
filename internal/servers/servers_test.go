@@ -1010,6 +1010,47 @@ func TestUpdateTenantIdentityProvider(t *testing.T) {
 		assertConnectCode(t, err, connect.CodeInvalidArgument)
 	})
 
+	t.Run("rename refreshes the org name mapper", func(t *testing.T) {
+		t.Parallel()
+		store := newFakeOrganizationStore(org)
+		store.idps["acme"] = keycloak.IdentityProvider{Alias: "acme"}
+		server := mustTenantsServer(t, store)
+		_, err := server.Update(ctx, &aigridv1.TenantsUpdateRequest{
+			Object: &aigridv1.Tenant{
+				Id: "org-1", Metadata: &aigridv1.Metadata{Version: 1, Name: "acme-corp"},
+			},
+			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"metadata.name"}},
+		})
+		if err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+		if got := store.mapperOrgNames["acme"]; got != "acme-corp" {
+			t.Fatalf("mapper org name = %q, want %q", got, "acme-corp")
+		}
+		if got := store.mappers["acme"].Config["attribute.value"]; got != "org-1" {
+			t.Fatalf("mapper org id = %q, want org-1", got)
+		}
+	})
+
+	t.Run("rename without an idp writes no mappers", func(t *testing.T) {
+		t.Parallel()
+		store := newFakeOrganizationStore(keycloak.Organization{
+			ID: "org-1", Name: "acme", Alias: "acme",
+			Attributes: map[string][]string{tenantVersionAttribute: {"1"}},
+		})
+		server := mustTenantsServer(t, store)
+		_, err := server.Update(ctx, &aigridv1.TenantsUpdateRequest{
+			Object:     &aigridv1.Tenant{Id: "org-1", Metadata: &aigridv1.Metadata{Version: 1, Name: "acme-corp"}},
+			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"metadata.name"}},
+		})
+		if err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+		if len(store.mapperOrgNames) != 0 {
+			t.Fatalf("unexpected mapper upsert: %v", store.mapperOrgNames)
+		}
+	})
+
 	t.Run("remove idp rejected", func(t *testing.T) {
 		t.Parallel()
 		store := newFakeOrganizationStore(org)
@@ -1370,8 +1411,10 @@ type fakeOrganizationStore struct {
 	idps    map[string]keycloak.IdentityProvider
 	links   map[string]string // orgID -> alias
 	mappers map[string]keycloak.IdentityProviderMapper
-	next    int
-	listErr error
+	// mapperOrgNames is the org name each alias's mappers were last upserted with.
+	mapperOrgNames map[string]string
+	next           int
+	listErr        error
 	// updateDelay widens the window between an Update's read and its write.
 	updateDelay time.Duration
 	// readBackErr makes UpdateOrganization store the change, then fail the
@@ -1390,11 +1433,12 @@ type fakeOrganizationStore struct {
 
 func newFakeOrganizationStore(orgs ...keycloak.Organization) *fakeOrganizationStore {
 	store := &fakeOrganizationStore{
-		byID:    make(map[string]keycloak.Organization, len(orgs)),
-		members: make(map[string][]keycloak.OrganizationMember),
-		idps:    make(map[string]keycloak.IdentityProvider),
-		links:   make(map[string]string),
-		mappers: make(map[string]keycloak.IdentityProviderMapper),
+		byID:           make(map[string]keycloak.Organization, len(orgs)),
+		members:        make(map[string][]keycloak.OrganizationMember),
+		idps:           make(map[string]keycloak.IdentityProvider),
+		links:          make(map[string]string),
+		mappers:        make(map[string]keycloak.IdentityProviderMapper),
+		mapperOrgNames: make(map[string]string),
 	}
 	for _, org := range orgs {
 		store.byID[org.ID] = org
@@ -1548,7 +1592,7 @@ func (f *fakeOrganizationStore) ConfigureOrganizationIdentityProvider(_ context.
 	return nil
 }
 
-func (f *fakeOrganizationStore) UpsertIdentityProviderMapper(_ context.Context, alias, organizationID, _ string) error {
+func (f *fakeOrganizationStore) UpsertIdentityProviderMapper(_ context.Context, alias, organizationID, organizationName string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.mapperErr != nil {
@@ -1562,6 +1606,7 @@ func (f *fakeOrganizationStore) UpsertIdentityProviderMapper(_ context.Context, 
 		IdentityProviderMapper: "hardcoded-attribute-idp-mapper",
 		Config:                 map[string]string{"attribute": "maas_org_id", "attribute.value": organizationID, "syncMode": "FORCE"},
 	}
+	f.mapperOrgNames[alias] = organizationName
 	return nil
 }
 

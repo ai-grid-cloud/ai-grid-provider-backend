@@ -354,11 +354,39 @@ func (s *TenantsServer) Update(ctx context.Context, req *aigridv1.TenantsUpdateR
 	if err != nil {
 		return nil, mapTenantKeycloakError("update", id, err)
 	}
+	if updateName {
+		// The org name mapper is hardcoded per IdP: refresh it so new logins get the new
+		// org_name. Done on every name update, not only a change, so a retry repairs a
+		// failed refresh.
+		if err := s.refreshIdentityProviderMappers(ctx, updated); err != nil {
+			return nil, err
+		}
+	}
 	tenant, err := tenantFromOrganization(updated)
 	if err != nil {
 		return nil, connect.Errorf(connect.CodeInternal, "project tenant: %v", err)
 	}
 	return &aigridv1.TenantsUpdateResponse{Object: tenant}, nil
+}
+
+// refreshIdentityProviderMappers upserts the broker mappers of an organization's linked
+// identity provider with its current id and name. An organization without one is left alone.
+func (s *TenantsServer) refreshIdentityProviderMappers(ctx context.Context, org keycloak.Organization) error {
+	storedIdP, err := identityProviderFromOrganizationAttrs(org.Attributes)
+	if err != nil {
+		return connect.Errorf(connect.CodeInternal, "read identity provider: %v", err)
+	}
+	if storedIdP == nil {
+		return nil
+	}
+	alias := org.Alias
+	if alias == "" {
+		alias = org.Name
+	}
+	if err := s.tenants.UpsertIdentityProviderMapper(ctx, alias, org.ID, org.Name); err != nil {
+		return mapTenantKeycloakError("update identity provider mappers", alias, err)
+	}
+	return nil
 }
 
 // errTenantVersionRequired answers an Update or Delete without a version.
