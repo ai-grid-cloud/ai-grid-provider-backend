@@ -2231,14 +2231,16 @@
           "description": "Optional HTTP or HTTPS URLs; empty when unset."
         },
         "jwks_url": {
-          "type": "string"
+          "type": "string",
+          "description": "HTTP or HTTPS URL. Required when validate_signature is true (the default):\nKeycloak rejects broker logins when signature checks are on and it has no JWKS.\nEmpty only when validate_signature is false."
         },
         "logout_url": {
-          "type": "string"
+          "type": "string",
+          "description": "Optional HTTP or HTTPS URL; empty when unset."
         },
         "validate_signature": {
           "type": "boolean",
-          "description": "Unset means true. Always set on output."
+          "description": "Unset means true. Always set on output. When true, jwks_url is required."
         }
       },
       "description": "OIDC client configuration for an IdentityProvider. Only the name of the\nSecret that holds the client secret is stored, never the secret itself."

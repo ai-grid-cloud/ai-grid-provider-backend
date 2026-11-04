@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf16"
+	"unicode/utf8"
 
 	connect "connectrpc.com/connect/v2"
 	aigridv1 "github.com/osac-project/ai-grid-provider-backend/gen/ai_grid/v1"
@@ -21,6 +23,10 @@ const (
 	// (varchar(255)). Organization attributes longer than this must be split
 	// across multiple values of the same attribute name.
 	keycloakGroupAttributeMax = 255
+	// chunkIndexPrefixLen is "0000|": a stable index so chunks can be rejoined
+	// when Keycloak returns multi-valued attributes out of order. The payload
+	// is chunked shorter so the stored value still fits in 255 bytes.
+	chunkIndexPrefixLen = 5
 )
 
 var (
@@ -116,12 +122,6 @@ func normalizeIdentityProvider(tenantName string, idp *aigridv1.IdentityProvider
 	}
 	cfg.UserInfoUrl = userInfo
 
-	jwks, err := normalizeIDPURL("spec.identity_provider.config.jwks_url", cfg.GetJwksUrl(), true)
-	if err != nil {
-		return nil, err
-	}
-	cfg.JwksUrl = jwks
-
 	logout, err := normalizeIDPURL("spec.identity_provider.config.logout_url", cfg.GetLogoutUrl(), true)
 	if err != nil {
 		return nil, err
@@ -132,6 +132,14 @@ func normalizeIdentityProvider(tenantName string, idp *aigridv1.IdentityProvider
 		validate := true
 		cfg.ValidateSignature = &validate
 	}
+	// Keycloak's broker calls PublicKeyStorageManager only when signature
+	// validation is on. With no JWKS URL that lookup is nil and every login
+	// fails with "token signature validation failed".
+	jwks, err := normalizeIDPURL("spec.identity_provider.config.jwks_url", cfg.GetJwksUrl(), !cfg.GetValidateSignature())
+	if err != nil {
+		return nil, err
+	}
+	cfg.JwksUrl = jwks
 
 	out.Config = cfg
 	return out, nil
@@ -149,13 +157,23 @@ func identityProviderToAttribute(idp *aigridv1.IdentityProvider) (string, error)
 }
 
 // identityProviderToAttributeValues marshals the IdP and splits it into chunks
-// that fit Keycloak's 255-character group attribute limit.
+// that fit Keycloak's 255-character group attribute limit. Each chunk is
+// prefixed with its index so a read can restore order.
 func identityProviderToAttributeValues(idp *aigridv1.IdentityProvider) ([]string, error) {
 	raw, err := identityProviderToAttribute(idp)
 	if err != nil {
 		return nil, err
 	}
-	return chunkString(raw, keycloakGroupAttributeMax), nil
+	payloadMax := keycloakGroupAttributeMax - chunkIndexPrefixLen
+	parts := chunkString(raw, payloadMax)
+	out := make([]string, len(parts))
+	for i, part := range parts {
+		out[i] = fmt.Sprintf("%04d|%s", i, part)
+		if len(out[i]) > keycloakGroupAttributeMax {
+			return nil, fmt.Errorf("identity provider chunk %d is %d bytes", i, len(out[i]))
+		}
+	}
+	return out, nil
 }
 
 func identityProviderFromAttribute(value string) (*aigridv1.IdentityProvider, error) {
@@ -174,9 +192,51 @@ func identityProviderFromOrganizationAttrs(attrs map[string][]string) (*aigridv1
 	if len(values) == 0 {
 		return nil, nil
 	}
-	return identityProviderFromAttribute(strings.Join(values, ""))
+	return identityProviderFromAttribute(joinIdentityProviderChunks(values))
 }
 
+// joinIdentityProviderChunks concatenates attribute values. Indexed chunks
+// (written by identityProviderToAttributeValues) are ordered by their prefix.
+// Values without that prefix are an older write and stay in the order Keycloak returned.
+func joinIdentityProviderChunks(values []string) string {
+	if ordered, ok := orderedIndexedChunks(values); ok {
+		return strings.Join(ordered, "")
+	}
+	return strings.Join(values, "")
+}
+
+func orderedIndexedChunks(values []string) ([]string, bool) {
+	out := make([]string, len(values))
+	seen := make([]bool, len(values))
+	for _, v := range values {
+		index, payload, ok := parseChunkIndex(v)
+		if !ok || index >= len(values) || seen[index] {
+			return nil, false
+		}
+		seen[index] = true
+		out[index] = payload
+	}
+	return out, true
+}
+
+func parseChunkIndex(v string) (int, string, bool) {
+	if len(v) < chunkIndexPrefixLen || v[chunkIndexPrefixLen-1] != '|' {
+		return 0, "", false
+	}
+	for i := 0; i < chunkIndexPrefixLen-1; i++ {
+		if v[i] < '0' || v[i] > '9' {
+			return 0, "", false
+		}
+	}
+	index, err := strconv.Atoi(v[:chunkIndexPrefixLen-1])
+	if err != nil {
+		return 0, "", false
+	}
+	return index, v[chunkIndexPrefixLen:], true
+}
+
+// chunkString splits s into pieces of at most size bytes, on rune boundaries,
+// so a multibyte character is never torn in half.
 func chunkString(s string, size int) []string {
 	if size <= 0 {
 		return []string{s}
@@ -185,12 +245,23 @@ func chunkString(s string, size int) []string {
 		return nil
 	}
 	out := make([]string, 0, (len(s)+size-1)/size)
-	for len(s) > size {
-		out = append(out, s[:size])
-		s = s[size:]
+	var b strings.Builder
+	n := 0
+	for _, r := range s {
+		w := utf8.RuneLen(r)
+		if w < 0 {
+			w = 1
+		}
+		if n > 0 && n+w > size {
+			out = append(out, b.String())
+			b.Reset()
+			n = 0
+		}
+		b.WriteRune(r)
+		n += w
 	}
-	if s != "" {
-		out = append(out, s)
+	if b.Len() > 0 {
+		out = append(out, b.String())
 	}
 	return out
 }

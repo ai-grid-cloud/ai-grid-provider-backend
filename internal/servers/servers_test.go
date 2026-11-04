@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	connect "connectrpc.com/connect/v2"
 	aigridv1 "github.com/osac-project/ai-grid-provider-backend/gen/ai_grid/v1"
@@ -840,6 +841,9 @@ func TestCreateTenant(t *testing.T) {
 		if _, ok := store.idps["acme"]; !ok {
 			t.Fatal("idp alias not created")
 		}
+		if store.idps["acme"].Config["useJwksUrl"] != "true" || store.idps["acme"].Config["jwksUrl"] == "" {
+			t.Fatalf("keycloak idp config = %+v, want jwksUrl and useJwksUrl", store.idps["acme"].Config)
+		}
 		if store.mappers["acme"].Config["attribute.value"] != got.GetObject().GetId() {
 			t.Fatalf("mapper value = %q, want org id", store.mappers["acme"].Config["attribute.value"])
 		}
@@ -921,6 +925,28 @@ func TestCreateTenant(t *testing.T) {
 		}
 	})
 
+	t.Run("cleanup runs after the caller cancels", func(t *testing.T) {
+		t.Parallel()
+		store := newFakeOrganizationStore()
+		store.linkIdPErr = &keycloak.APIError{Op: "link", StatusCode: http.StatusBadGateway}
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		store.linkHook = cancel
+		server := mustTenantsServerWithSecrets(t, store, &fakeSecretReader{secrets: map[string][]byte{"acme-idp-secret": []byte("x")}})
+		_, err := server.Create(ctx, &aigridv1.TenantsCreateRequest{
+			Object: &aigridv1.Tenant{
+				Metadata: &aigridv1.Metadata{Name: "acme"},
+				Spec:     &aigridv1.TenantSpec{IdentityProvider: validCreateIdP()},
+			},
+		})
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if len(store.byID) != 0 || len(store.idps) != 0 {
+			t.Fatalf("canceled caller left orgs=%v idps=%v", store.byID, store.idps)
+		}
+	})
+
 	t.Run("mapper failure cleans up", func(t *testing.T) {
 		t.Parallel()
 		store := newFakeOrganizationStore()
@@ -959,6 +985,62 @@ func TestCreateTenant(t *testing.T) {
 	})
 }
 
+func TestListSkipsUnreadableIdentityProvider(t *testing.T) {
+	t.Parallel()
+	normalized, err := normalizeIdentityProvider("good-org", validCreateIdP())
+	if err != nil {
+		t.Fatalf("normalize: %v", err)
+	}
+	chunks, err := identityProviderToAttributeValues(normalized)
+	if err != nil {
+		t.Fatalf("attribute: %v", err)
+	}
+	store := newFakeOrganizationStore(
+		keycloak.Organization{
+			ID: "bad", Name: "bad-org", Alias: "bad-org",
+			Domains: []keycloak.OrganizationDomain{{Name: "bad.example.com"}},
+			Attributes: map[string][]string{
+				tenantVersionAttribute:          {"1"},
+				tenantIdentityProviderAttribute: {"{"},
+			},
+		},
+		keycloak.Organization{
+			ID: "good", Name: "good-org", Alias: "good-org",
+			Attributes: map[string][]string{
+				tenantVersionAttribute:          {"1"},
+				tenantIdentityProviderAttribute: chunks,
+			},
+		},
+	)
+	server := mustTenantsServer(t, store)
+	listed, err := server.List(context.Background(), &aigridv1.TenantsListRequest{})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if listed.GetTotal() != 2 || len(listed.GetItems()) != 2 {
+		t.Fatalf("List size = %d items %d, want both tenants", listed.GetTotal(), len(listed.GetItems()))
+	}
+	byID := map[string]*aigridv1.Tenant{}
+	for _, item := range listed.GetItems() {
+		byID[item.GetId()] = item
+	}
+	bad := byID["bad"]
+	if bad == nil || bad.GetSpec().GetIdentityProvider() != nil || len(bad.GetSpec().GetDomains()) != 1 {
+		t.Fatalf("bad tenant = %+v", bad)
+	}
+	good := byID["good"]
+	if good.GetSpec().GetIdentityProvider().GetConfig().GetClientSecretSecretName() != "acme-idp-secret" {
+		t.Fatalf("good tenant idp = %+v", good.GetSpec().GetIdentityProvider())
+	}
+	got, err := server.Get(context.Background(), &aigridv1.TenantsGetRequest{Id: "bad"})
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.GetObject().GetSpec().GetIdentityProvider() != nil || got.GetObject().GetMetadata().GetName() != "bad-org" {
+		t.Fatalf("Get bad = %+v", got.GetObject())
+	}
+}
+
 func TestUpdateTenantIdentityProvider(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -977,6 +1059,30 @@ func TestUpdateTenantIdentityProvider(t *testing.T) {
 			tenantIdentityProviderAttribute: {raw},
 		},
 	}
+
+	t.Run("maskless identity provider patch keeps domains", func(t *testing.T) {
+		t.Parallel()
+		stored := org
+		stored.Domains = []keycloak.OrganizationDomain{{Name: "acme.example.com", Verified: true}}
+		store := newFakeOrganizationStore(stored)
+		server := mustTenantsServer(t, store)
+		changed := validCreateIdP()
+		changed.Title = "other"
+		_, err := server.Update(ctx, &aigridv1.TenantsUpdateRequest{
+			Object: &aigridv1.Tenant{
+				Id: "org-1", Metadata: &aigridv1.Metadata{Version: 1},
+				Spec: &aigridv1.TenantSpec{IdentityProvider: changed},
+			},
+		})
+		assertConnectCode(t, err, connect.CodeInvalidArgument)
+		got := store.byID["org-1"]
+		if len(got.Domains) != 1 || got.Domains[0].Name != "acme.example.com" || !got.Domains[0].Verified {
+			t.Fatalf("domains = %+v, want acme.example.com kept", got.Domains)
+		}
+		if store.puts != 0 {
+			t.Fatalf("maskless idp patch wrote the organization: puts=%d", store.puts)
+		}
+	})
 
 	t.Run("same idp succeeds without idp write", func(t *testing.T) {
 		t.Parallel()
@@ -1475,6 +1581,8 @@ type fakeOrganizationStore struct {
 	deleteIdPErr   error
 	deleteOrgErr   error
 	deleteIdPCalls int
+	// linkHook runs at the start of LinkOrganizationIdentityProvider, before the error.
+	linkHook func()
 }
 
 func newFakeOrganizationStore(orgs ...keycloak.Organization) *fakeOrganizationStore {
@@ -1574,7 +1682,10 @@ func (f *fakeOrganizationStore) ListOrganizationMembers(_ context.Context, orgID
 	return out, nil
 }
 
-func (f *fakeOrganizationStore) DeleteOrganization(_ context.Context, id string) error {
+func (f *fakeOrganizationStore) DeleteOrganization(ctx context.Context, id string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.deleteOrgErr != nil {
@@ -1601,7 +1712,10 @@ func (f *fakeOrganizationStore) CreateIdentityProvider(_ context.Context, idp ke
 	return nil
 }
 
-func (f *fakeOrganizationStore) DeleteIdentityProvider(_ context.Context, alias string) error {
+func (f *fakeOrganizationStore) DeleteIdentityProvider(ctx context.Context, alias string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.deleteIdPCalls++
@@ -1616,9 +1730,15 @@ func (f *fakeOrganizationStore) DeleteIdentityProvider(_ context.Context, alias 
 	return nil
 }
 
-func (f *fakeOrganizationStore) LinkOrganizationIdentityProvider(_ context.Context, orgID, alias string) error {
+func (f *fakeOrganizationStore) LinkOrganizationIdentityProvider(ctx context.Context, orgID, alias string) error {
+	if f.linkHook != nil {
+		f.linkHook()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if err := ctx.Err(); err != nil && f.linkIdPErr == nil {
+		return err
+	}
 	if f.linkIdPErr != nil {
 		return f.linkIdPErr
 	}
@@ -2115,6 +2235,7 @@ func TestTenantIdentityProviderValidation(t *testing.T) {
 				Issuer:                 "https://idp.example.com",
 				AuthorizationUrl:       "https://idp.example.com/auth",
 				TokenUrl:               "https://idp.example.com/token",
+				JwksUrl:                "https://idp.example.com/jwks",
 			},
 		}
 	}
@@ -2188,13 +2309,39 @@ func TestTenantIdentityProviderValidation(t *testing.T) {
 		t.Parallel()
 		idp := valid()
 		idp.Config.UserInfoUrl = "https://idp.example.com/userinfo"
-		idp.Config.JwksUrl = ""
+		idp.Config.LogoutUrl = "https://idp.example.com/logout"
 		got, err := normalizeIdentityProvider("acme", idp)
 		if err != nil {
 			t.Fatalf("normalize: %v", err)
 		}
-		if got.GetConfig().GetUserInfoUrl() == "" || got.GetConfig().GetJwksUrl() != "" {
+		if got.GetConfig().GetUserInfoUrl() == "" || got.GetConfig().GetLogoutUrl() == "" {
 			t.Fatalf("optional urls = %+v", got.GetConfig())
+		}
+	})
+
+	t.Run("jwks required when validating signatures", func(t *testing.T) {
+		t.Parallel()
+		idp := valid()
+		idp.Config.JwksUrl = ""
+		_, err := normalizeIdentityProvider("acme", idp)
+		assertConnectCode(t, err, connect.CodeInvalidArgument)
+		if err == nil || !strings.Contains(err.Error(), "jwks_url") {
+			t.Fatalf("error = %v, want jwks_url", err)
+		}
+	})
+
+	t.Run("jwks optional when signature validation is off", func(t *testing.T) {
+		t.Parallel()
+		idp := valid()
+		idp.Config.JwksUrl = "  "
+		validate := false
+		idp.Config.ValidateSignature = &validate
+		got, err := normalizeIdentityProvider("acme", idp)
+		if err != nil {
+			t.Fatalf("normalize: %v", err)
+		}
+		if got.GetConfig().GetValidateSignature() || got.GetConfig().GetJwksUrl() != "" {
+			t.Fatalf("config = %+v", got.GetConfig())
 		}
 	})
 }
@@ -2254,6 +2401,53 @@ func TestTenantIdentityProviderPersistence(t *testing.T) {
 	if _, err := identityProviderFromAttribute("{"); err == nil {
 		t.Fatal("malformed JSON expected error")
 	}
+
+	// Keycloak may return multi-valued attributes in any order. The index prefix
+	// is what puts the JSON back together.
+	reversed := append([]string(nil), chunks...)
+	for i, j := 0, len(reversed)-1; i < j; i, j = i+1, j-1 {
+		reversed[i], reversed[j] = reversed[j], reversed[i]
+	}
+	reordered, err := identityProviderFromOrganizationAttrs(map[string][]string{
+		tenantIdentityProviderAttribute: reversed,
+	})
+	if err != nil || reordered.GetConfig().GetClientSecretSecretName() != "sec" {
+		t.Fatalf("reordered round-trip = %+v, err=%v", reordered, err)
+	}
+
+	// Writes from before the index prefix are still joined in stored order.
+	legacy := chunkString(raw, 100)
+	for _, c := range legacy {
+		if len(c) >= chunkIndexPrefixLen && c[chunkIndexPrefixLen-1] == '|' && c[0] >= '0' && c[0] <= '9' {
+			t.Fatalf("legacy chunk looks indexed: %q", c)
+		}
+	}
+	legacyGot, err := identityProviderFromOrganizationAttrs(map[string][]string{
+		tenantIdentityProviderAttribute: legacy,
+	})
+	if err != nil || legacyGot.GetTitle() != idp.GetTitle() {
+		t.Fatalf("legacy round-trip = %+v, err=%v", legacyGot, err)
+	}
+}
+
+func TestChunkStringKeepsRunesWhole(t *testing.T) {
+	t.Parallel()
+	const in = "aaa世bbb世"
+	chunks := chunkString(in, 4)
+	if strings.Join(chunks, "") != in {
+		t.Fatalf("chunks %q joined to %q", chunks, strings.Join(chunks, ""))
+	}
+	for i, c := range chunks {
+		if len(c) > 4 {
+			t.Fatalf("chunk %d %q is %d bytes", i, c, len(c))
+		}
+		if !utf8.ValidString(c) {
+			t.Fatalf("chunk %d is not valid UTF-8: %q", i, c)
+		}
+	}
+	if strings.Contains(strings.Join(chunks, ""), "\uFFFD") {
+		t.Fatal("chunk split a rune")
+	}
 }
 
 func validCreateIdP() *aigridv1.IdentityProvider {
@@ -2264,6 +2458,7 @@ func validCreateIdP() *aigridv1.IdentityProvider {
 			Issuer:                 "https://idp.example.com",
 			AuthorizationUrl:       "https://idp.example.com/auth",
 			TokenUrl:               "https://idp.example.com/token",
+			JwksUrl:                "https://idp.example.com/jwks",
 		},
 	}
 }

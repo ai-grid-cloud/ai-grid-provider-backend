@@ -285,9 +285,13 @@ type OidcConfig struct {
 	DefaultScopes string `protobuf:"bytes,6,opt,name=default_scopes,json=defaultScopes,proto3" json:"default_scopes,omitempty"`
 	// Optional HTTP or HTTPS URLs; empty when unset.
 	UserInfoUrl string `protobuf:"bytes,7,opt,name=user_info_url,json=userInfoUrl,proto3" json:"user_info_url,omitempty"`
-	JwksUrl     string `protobuf:"bytes,8,opt,name=jwks_url,json=jwksUrl,proto3" json:"jwks_url,omitempty"`
-	LogoutUrl   string `protobuf:"bytes,9,opt,name=logout_url,json=logoutUrl,proto3" json:"logout_url,omitempty"`
-	// Unset means true. Always set on output.
+	// HTTP or HTTPS URL. Required when validate_signature is true (the default):
+	// Keycloak rejects broker logins when signature checks are on and it has no JWKS.
+	// Empty only when validate_signature is false.
+	JwksUrl string `protobuf:"bytes,8,opt,name=jwks_url,json=jwksUrl,proto3" json:"jwks_url,omitempty"`
+	// Optional HTTP or HTTPS URL; empty when unset.
+	LogoutUrl string `protobuf:"bytes,9,opt,name=logout_url,json=logoutUrl,proto3" json:"logout_url,omitempty"`
+	// Unset means true. Always set on output. When true, jwks_url is required.
 	ValidateSignature *bool `protobuf:"varint,10,opt,name=validate_signature,json=validateSignature,proto3,oneof" json:"validate_signature,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache

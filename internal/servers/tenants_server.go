@@ -153,11 +153,7 @@ func (s *TenantsServer) List(ctx context.Context, req *aigridv1.TenantsListReque
 	}
 	items := make([]*aigridv1.Tenant, 0, len(organizations))
 	for _, organization := range organizations {
-		tenant, err := tenantFromOrganization(organization)
-		if err != nil {
-			return nil, connect.Errorf(connect.CodeInternal, "project tenant %q: %v", organization.ID, err)
-		}
-		items = append(items, tenant)
+		items = append(items, s.projectTenant(ctx, organization))
 	}
 	page, total := applyListWindow(items, req.Offset, req.Limit)
 	return &aigridv1.TenantsListResponse{
@@ -177,11 +173,31 @@ func (s *TenantsServer) Get(ctx context.Context, req *aigridv1.TenantsGetRequest
 	if err != nil {
 		return nil, mapTenantKeycloakError("get", id, err)
 	}
+	return &aigridv1.TenantsGetResponse{Object: s.projectTenant(ctx, organization)}, nil
+}
+
+// projectTenant maps an organization to a Tenant. A stored identity provider
+// that does not decode is logged and left off the response, so one bad
+// attribute does not fail List or Get for every organization.
+func (s *TenantsServer) projectTenant(ctx context.Context, organization keycloak.Organization) *aigridv1.Tenant {
 	tenant, err := tenantFromOrganization(organization)
-	if err != nil {
-		return nil, connect.Errorf(connect.CodeInternal, "project tenant: %v", err)
+	if err == nil {
+		return tenant
 	}
-	return &aigridv1.TenantsGetResponse{Object: tenant}, nil
+	s.logger.WarnContext(ctx, "tenant identity provider attribute ignored", "id", organization.ID, "error", err)
+	stripped := organization
+	if stripped.Attributes != nil {
+		attrs := maps.Clone(stripped.Attributes)
+		delete(attrs, tenantIdentityProviderAttribute)
+		stripped.Attributes = attrs
+	}
+	tenant, err = tenantFromOrganization(stripped)
+	if err != nil {
+		// tenantFromOrganization only fails while decoding the attribute.
+		s.logger.ErrorContext(ctx, "tenant projection failed after dropping identity provider", "id", organization.ID, "error", err)
+		return &aigridv1.Tenant{Id: organization.ID}
+	}
+	return tenant
 }
 
 // Create creates a Keycloak Organization for the tenant.
@@ -631,9 +647,18 @@ func domainsFromTenantSpec(spec *aigridv1.TenantSpec) ([]keycloak.OrganizationDo
 func tenantUpdatePaths(mask *fieldmaskpb.FieldMask, object *aigridv1.Tenant) (name, domains, idp, nameRequired bool, err error) {
 	if mask == nil || len(mask.GetPaths()) == 0 {
 		// Only a name counts: metadata holding just the version or creation
-		// time names nothing to write, so it stays a no-op. IdP is immutable
-		// and checked only when the mask names it (or spec).
-		return object.GetMetadata().GetName() != "", object.GetSpec() != nil, false, false, nil
+		// time names nothing to write, so it stays a no-op.
+		//
+		// spec != nil used to mean "replace domains". A REST PATCH that sends
+		// only spec.identityProvider still has an empty domains list (proto3
+		// has no presence for it), so that cleared the domains and never
+		// checked the identity provider. An identity provider with no domains
+		// is an IdP check, not a domain write. Domains are still replaced
+		// when the body has no identity provider, including an empty list.
+		spec := object.GetSpec()
+		idp := spec.GetIdentityProvider() != nil
+		domains := spec != nil && (spec.GetIdentityProvider() == nil || len(spec.GetDomains()) > 0)
+		return object.GetMetadata().GetName() != "", domains, idp, false, nil
 	}
 	for _, path := range mask.GetPaths() {
 		p := strings.TrimPrefix(path, "object.")
@@ -774,7 +799,15 @@ func (s *TenantsServer) setupIdentityProvider(ctx context.Context, org keycloak.
 	return idpCreated, nil
 }
 
+// identityProviderCleanupTimeout bounds rollback after the caller's context
+// is already canceled. It matches the Keycloak admin client's own timeout.
+const identityProviderCleanupTimeout = 30 * time.Second
+
 func (s *TenantsServer) cleanupIdentityProviderCreate(ctx context.Context, orgID, alias string, idpCreated bool, setupErr error) error {
+	// The caller may have canceled mid-create. Cleanup still has to remove the
+	// organization and identity provider, or a retry collides with what was left behind.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), identityProviderCleanupTimeout)
+	defer cancel()
 	var idpCleanupErr, orgCleanupErr error
 	if idpCreated {
 		idpCleanupErr = s.tenants.DeleteIdentityProvider(ctx, alias)
