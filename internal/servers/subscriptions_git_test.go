@@ -234,6 +234,130 @@ func assertArgoSyncOptions(t *testing.T, writer gitops.Writer, id, want string) 
 	}
 }
 
+// Deleting the last subscription keeps catalog/subscriptions in Git with a
+// README, so Argo CD prunes the MaaSSubscription (Delete=false) rather than
+// a catalog ApplicationSet deleting the Application and leaving it. A delete
+// that leaves another file writes nothing more, and an existing README is
+// left as it is.
+func TestSubscriptionsGitDeleteKeepsDirectory(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	keep := path.Join(subscriptionsGitDir, subscriptionsKeepFile)
+
+	writer := gitops.NewMemoryWriter(gitModelSeed("sim-model"))
+	srv := mustGitSubscriptionsServer(t, writer)
+	for _, id := range []string{"team-a", "team-b"} {
+		if _, err := srv.Create(ctx, &aigridv1.SubscriptionsCreateRequest{Object: gitSampleSubscription(id)}); err != nil {
+			t.Fatalf("Create(%s) error = %v", id, err)
+		}
+	}
+	if _, err := srv.Delete(ctx, &aigridv1.SubscriptionsDeleteRequest{Id: "team-a"}); err != nil {
+		t.Fatalf("Delete(team-a) error = %v", err)
+	}
+	assertGitDirFiles(t, writer, subscriptionsGitDir, "team-b.yaml")
+	if _, err := srv.Delete(ctx, &aigridv1.SubscriptionsDeleteRequest{Id: "team-b"}); err != nil {
+		t.Fatalf("Delete(team-b) error = %v", err)
+	}
+	assertGitDirFiles(t, writer, subscriptionsGitDir, subscriptionsKeepFile)
+	head, err := writer.Head(ctx)
+	if err != nil {
+		t.Fatalf("Head() error = %v", err)
+	}
+	if data, err := head.Read(keep); err != nil || string(data) != subscriptionsKeepText {
+		t.Fatalf("Read(%s) = %q, %v", keep, data, err)
+	}
+	list, err := srv.List(ctx, &aigridv1.SubscriptionsListRequest{})
+	if err != nil || list.GetTotal() != 0 {
+		t.Fatalf("List() = %v, %v, want none", list, err)
+	}
+
+	seed := gitModelSeed("sim-model")
+	seed[keep] = []byte("custom")
+	seeded := gitops.NewMemoryWriter(seed)
+	srv = mustGitSubscriptionsServer(t, seeded)
+	if _, err := srv.Create(ctx, &aigridv1.SubscriptionsCreateRequest{Object: gitSampleSubscription("team-a")}); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, err := srv.Delete(ctx, &aigridv1.SubscriptionsDeleteRequest{Id: "team-a"}); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	head, err = seeded.Head(ctx)
+	if err != nil {
+		t.Fatalf("Head() error = %v", err)
+	}
+	if data, err := head.Read(keep); err != nil || string(data) != "custom" {
+		t.Fatalf("Read(%s) = %q, %v, want the seeded file left as it was", keep, data, err)
+	}
+}
+
+// Two deletes at once that each leave the other's file: the second to commit
+// conflicts on the directory, and its rerun writes the README. Once the
+// README is there, neither reads the directory, so neither conflicts.
+func TestSubscriptionsGitConcurrentDeletesKeepDirectory(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	writer := &racingWriter{MemoryWriter: gitops.NewMemoryWriter(gitModelSeed("sim-model"))}
+	srv := mustGitSubscriptionsServer(t, writer)
+	other := mustGitSubscriptionsServer(t, writer.MemoryWriter)
+	for _, id := range []string{"team-a", "team-b"} {
+		if _, err := other.Create(ctx, &aigridv1.SubscriptionsCreateRequest{Object: gitSampleSubscription(id)}); err != nil {
+			t.Fatalf("Create(%s) error = %v", id, err)
+		}
+	}
+	writer.race = func() {
+		if _, err := other.Delete(ctx, &aigridv1.SubscriptionsDeleteRequest{Id: "team-b"}); err != nil {
+			t.Errorf("racing Delete() error = %v", err)
+		}
+	}
+	if _, err := srv.Delete(ctx, &aigridv1.SubscriptionsDeleteRequest{Id: "team-a"}); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	if writer.commits != 2 {
+		t.Fatalf("commits through srv = %d, want a conflict and a rerun", writer.commits)
+	}
+	assertGitDirFiles(t, writer, subscriptionsGitDir, subscriptionsKeepFile)
+
+	// With the keep file in place the directory stays, so the deletes don't
+	// read it, and neither conflicts with the other.
+	seed := gitModelSeed("sim-model")
+	seed[path.Join(subscriptionsGitDir, subscriptionsKeepFile)] = []byte(subscriptionsKeepText)
+	writer = &racingWriter{MemoryWriter: gitops.NewMemoryWriter(seed)}
+	srv = mustGitSubscriptionsServer(t, writer)
+	other = mustGitSubscriptionsServer(t, writer.MemoryWriter)
+	for _, id := range []string{"team-a", "team-b"} {
+		if _, err := other.Create(ctx, &aigridv1.SubscriptionsCreateRequest{Object: gitSampleSubscription(id)}); err != nil {
+			t.Fatalf("Create(%s) error = %v", id, err)
+		}
+	}
+	writer.race = func() {
+		if _, err := other.Delete(ctx, &aigridv1.SubscriptionsDeleteRequest{Id: "team-b"}); err != nil {
+			t.Errorf("racing Delete() error = %v", err)
+		}
+	}
+	if _, err := srv.Delete(ctx, &aigridv1.SubscriptionsDeleteRequest{Id: "team-a"}); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	if writer.commits != 1 {
+		t.Fatalf("commits through srv = %d, want one, with no conflict", writer.commits)
+	}
+	assertGitDirFiles(t, writer, subscriptionsGitDir, subscriptionsKeepFile)
+}
+
+func assertGitDirFiles(t *testing.T, writer gitops.Writer, dir string, want ...string) {
+	t.Helper()
+	head, err := writer.Head(context.Background())
+	if err != nil {
+		t.Fatalf("Head() error = %v", err)
+	}
+	got, err := head.List(dir)
+	if err != nil {
+		t.Fatalf("List(%s) error = %v", dir, err)
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("files in %s = %v, want %v", dir, got, want)
+	}
+}
+
 func TestSubscriptionsGitUpdateMasks(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

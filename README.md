@@ -345,8 +345,13 @@ For subscriptions:
   reason `SavedToGit`, so a client doesn't take the models as missing.
 - Keep a file that isn't `*.yaml`, such as a `README`, in
   `catalog/subscriptions/`. Git drops an empty directory, so without it
-  deleting the last subscription removes the path, and Argo CD reports an error
-  instead of pruning. List reads only `*.yaml` files.
+  deleting the last subscription removes the path, and Argo CD doesn't prune:
+  an Application with a fixed path reports an error, and an ApplicationSet
+  whose Git generator lists the directory deletes the Application instead,
+  which keeps the `MaaSSubscription` (`Delete=false`) and leaves its keys
+  valid. When a delete would leave the directory empty, the backend writes
+  `catalog/subscriptions/README` in the same commit; it never changes an
+  existing one. List reads only `*.yaml` files.
 
 For models:
 

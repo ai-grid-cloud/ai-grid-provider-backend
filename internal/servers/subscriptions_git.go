@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -33,6 +34,12 @@ const (
 	// gitVersionAnnotation counts the changes to a file. metadata.version
 	// reads it, as it would read a resourceVersion from a cluster.
 	gitVersionAnnotation = "ai-grid/version"
+
+	// subscriptionsKeepFile keeps subscriptionsGitDir in Git when it has no
+	// subscription. It isn't *.yaml, so neither List nor Argo CD reads it.
+	// hack/dev-catalog.sh seeds the same file.
+	subscriptionsKeepFile = "README"
+	subscriptionsKeepText = "Subscriptions the backend commits, one file each. Keep this file.\n"
 
 	// argoSyncOptionsAnnotation holds the Argo CD sync options of one
 	// object, comma-separated.
@@ -432,6 +439,13 @@ func (s *SubscriptionsServer) gitUpdateOn(ctx context.Context, head gitops.Snaps
 // A nonzero version must equal the file's, or the delete is Aborted. The
 // commit is made on the revision read, so a concurrent write to the file
 // makes it conflict, and Delete's rerun checks the version again.
+//
+// When the file is the directory's last, the commit also writes
+// subscriptionsKeepFile, so the directory stays and Argo CD prunes the
+// subscription. Git drops an empty directory, and a catalog ApplicationSet
+// whose generator lists the directory would then delete the Application
+// instead, which leaves the MaaSSubscription (Delete=false) and its keys
+// valid.
 func (s *SubscriptionsServer) gitDelete(ctx context.Context, id string, version int32) error {
 	return decideOnHead(ctx, s.writer, func(err error) error { return subscriptionGitError("delete", id, err) }, func(head gitops.Snapshot) error {
 		return s.gitDeleteOn(ctx, head, id, version)
@@ -448,11 +462,26 @@ func (s *SubscriptionsServer) gitDeleteOn(ctx context.Context, head gitops.Snaps
 	if version != 0 && version != current.sub.GetMetadata().GetVersion() {
 		return staleSubscriptionError("delete", id)
 	}
-	_, err = s.writer.Commit(ctx, head.Revision(), gitops.Change{
+	files, err := head.List(subscriptionsGitDir)
+	if err != nil {
+		return subscriptionGitError("delete", id, err)
+	}
+	change := gitops.Change{
 		Delete:  []string{subscriptionGitPath(id)},
 		Message: "subscriptions: delete " + id,
-	})
-	if err != nil {
+	}
+	if !slices.Contains(files, subscriptionsKeepFile) {
+		// Without the keep file the directory's other files decide whether
+		// this delete writes it, so the commit reads the directory: a
+		// concurrent write that adds or removes another file makes it
+		// conflict, and the rerun decides again. With the keep file the
+		// directory stays whatever else changes.
+		change.Read = []string{subscriptionsGitDir}
+		if len(files) == 1 {
+			change.Put = map[string][]byte{path.Join(subscriptionsGitDir, subscriptionsKeepFile): []byte(subscriptionsKeepText)}
+		}
+	}
+	if _, err = s.writer.Commit(ctx, head.Revision(), change); err != nil {
 		return subscriptionGitError("delete", id, err)
 	}
 	return nil
