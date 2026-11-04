@@ -126,6 +126,114 @@ func TestSubscriptionsGitDeleteWithoutVersion(t *testing.T) {
 	assertConnectCode(t, err, connect.CodeNotFound)
 }
 
+// Every MaaSSubscription the backend writes carries the Argo CD sync option
+// Delete=false, so a cluster leaving the ingress Placement keeps its copy and
+// MaaS doesn't revoke the subscription's keys on every cluster. Its
+// MaaSAuthPolicy carries none, so that cluster still loses access. Reads
+// don't return the annotation, so a client can send back what it read.
+func TestSubscriptionsGitArgoDeleteFalse(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	writer := gitops.NewMemoryWriter(gitModelSeed("sim-model"))
+	srv := mustGitSubscriptionsServer(t, writer)
+	created, err := srv.Create(ctx, &aigridv1.SubscriptionsCreateRequest{Object: gitSampleSubscription("team-a")})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	assertArgoSyncOptions(t, writer, "team-a", "Delete=false")
+	if _, ok := created.GetObject().GetMetadata().GetAnnotations()[argoSyncOptionsAnnotation]; ok {
+		t.Fatal("Create returned the sync options annotation")
+	}
+
+	// An update keeps it, whether or not it rewrites the metadata.
+	update := gitSampleSubscription("team-a")
+	update.Spec.Priority = 20
+	if _, err := srv.Update(ctx, &aigridv1.SubscriptionsUpdateRequest{Object: update, UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"spec"}}}); err != nil {
+		t.Fatalf("Update(spec) error = %v", err)
+	}
+	assertArgoSyncOptions(t, writer, "team-a", "Delete=false")
+	got, err := srv.Get(ctx, &aigridv1.SubscriptionsGetRequest{Id: "team-a"})
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if _, ok := got.GetObject().GetMetadata().GetAnnotations()[argoSyncOptionsAnnotation]; ok {
+		t.Fatal("Get returned the sync options annotation")
+	}
+	if _, err := srv.Update(ctx, &aigridv1.SubscriptionsUpdateRequest{Object: got.GetObject(), UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"metadata"}}}); err != nil {
+		t.Fatalf("Update(read metadata back) error = %v", err)
+	}
+	assertArgoSyncOptions(t, writer, "team-a", "Delete=false")
+}
+
+// An update keeps the other sync options a hand edit gave the file, once
+// each, and puts Delete=false in place of any other Delete option, which
+// Argo CD would read first.
+func TestSubscriptionsGitArgoSyncOptionsMerged(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	writer := gitops.NewMemoryWriter(gitModelSeed("sim-model"))
+	srv := mustGitSubscriptionsServer(t, writer)
+	if _, err := srv.Create(ctx, &aigridv1.SubscriptionsCreateRequest{Object: gitSampleSubscription("team-a")}); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	p := subscriptionGitPath("team-a")
+	docs := readGitYAMLDocs(t, writer, p)
+	for _, doc := range docs {
+		if doc.GetKind() == "MaaSSubscription" {
+			annotations := doc.GetAnnotations()
+			annotations[argoSyncOptionsAnnotation] = "ServerSideApply=true, Delete=confirm,,ServerSideApply=true"
+			doc.SetAnnotations(annotations)
+		}
+	}
+	data, err := marshalYAMLDocs(docs...)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	head, err := writer.Head(ctx)
+	if err != nil {
+		t.Fatalf("Head() error = %v", err)
+	}
+	if _, err := writer.Commit(ctx, head.Revision(), gitops.Change{Put: map[string][]byte{p: data}, Message: "hand edit"}); err != nil {
+		t.Fatalf("Commit(hand edit) error = %v", err)
+	}
+
+	update := gitSampleSubscription("team-a")
+	update.Spec.Priority = 20
+	if _, err := srv.Update(ctx, &aigridv1.SubscriptionsUpdateRequest{Object: update, UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"spec"}}}); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+	assertArgoSyncOptions(t, writer, "team-a", "ServerSideApply=true,Delete=false")
+}
+
+func TestWithArgoDeleteFalse(t *testing.T) {
+	t.Parallel()
+	for in, want := range map[string]string{
+		"":                                  "Delete=false",
+		"Delete=false":                      "Delete=false",
+		"Delete=true":                       "Delete=false",
+		"Delete=confirm, Prune=false":       "Prune=false,Delete=false",
+		" Validate=false ,,Validate=false ": "Validate=false,Delete=false",
+		"Delete=false,Replace=true":         "Replace=true,Delete=false",
+	} {
+		if got := withArgoDeleteFalse(in); got != want {
+			t.Errorf("withArgoDeleteFalse(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// assertArgoSyncOptions checks the sync options of subscription id's file:
+// want on its MaaSSubscription, and none on its MaaSAuthPolicy.
+func assertArgoSyncOptions(t *testing.T, writer gitops.Writer, id, want string) {
+	t.Helper()
+	sub, policy := readGitSubscriptionFile(t, writer, id)
+	if got := sub.GetAnnotations()[argoSyncOptionsAnnotation]; got != want {
+		t.Fatalf("file MaaSSubscription %s = %q, want %q", argoSyncOptionsAnnotation, got, want)
+	}
+	if got, ok := policy.GetAnnotations()[argoSyncOptionsAnnotation]; ok {
+		t.Fatalf("file MaaSAuthPolicy %s = %q, want none: a cluster leaving the Placement must delete it", argoSyncOptionsAnnotation, got)
+	}
+}
+
 func TestSubscriptionsGitUpdateMasks(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

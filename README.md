@@ -284,6 +284,38 @@ For subscriptions:
   repeats are dropped.
 - The policy lives in the subscription's file, so Argo CD prunes both
   together; it has no ownerReference.
+- The `MaaSSubscription` carries the Argo CD sync option `Delete=false`
+  (annotation `argocd.argoproj.io/sync-options`); the policy doesn't. MaaS
+  revokes every API key of a subscription whose `MaaSSubscription` is deleted
+  on any cluster, in the key database the clusters share. With `Delete=false`,
+  a cluster removed from AI Grid, whose catalog Application is then deleted,
+  keeps its `MaaSSubscription`, so the keys stay valid on the other clusters,
+  and loses the policy, so it refuses the subscription's users.
+  `Delete=false` applies only when an Application is deleted, not to
+  pruning: deleting the file still prunes both objects from every cluster,
+  and MaaS revokes the keys. An update keeps any other sync option the file
+  has and replaces any other `Delete` option. Reads don't return the
+  annotation.
+- `Delete=false` covers a cluster leaving the grid, not a role change. A
+  change to the `inference` role turns MaaS off on the cluster, which deletes
+  its `AITenant`, and deleting an `AITenant` revokes every API key of that
+  tenant in the shared database; the grid has one tenant, so that can be every
+  key in AI Grid. Clusters/Update keeps refusing a role change away from
+  ingress while the cluster serves any subscription
+  ([Cluster membership](#cluster-membership-state-and-location)).
+- A cluster removed from the grid keeps an orphaned copy of each
+  `MaaSSubscription` it had. The copies stay there until MaaS has a
+  supported way to delete a subscription without revoking its keys
+  ([RHAI-20306](https://redhat.atlassian.net/browse/RHAI-20306)). Don't
+  delete one by hand, and don't uninstall MaaS on that cluster while
+  maas-controller runs: each copy carries the finalizer
+  `maas.opendatahub.io/subscription-cleanup`, and its cleanup revokes that
+  subscription's keys, by name, on every cluster. Removing the finalizer
+  first doesn't help, because maas-controller adds it back whenever it
+  reconciles a subscription that isn't being deleted.
+- A cluster that joins the grid again gets the catalog's Application back.
+  Argo CD adopts an orphan whose file still exists, and prunes one whose file
+  is gone, which revokes by name again.
 - A model ref without a namespace gets the subscription's namespace
   (`models-as-a-service` by default). A ref in that namespace must name a
   model in the repository, or Create and Update answer `FailedPrecondition`;

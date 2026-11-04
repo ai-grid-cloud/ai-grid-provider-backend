@@ -33,6 +33,18 @@ const (
 	// gitVersionAnnotation counts the changes to a file. metadata.version
 	// reads it, as it would read a resourceVersion from a cluster.
 	gitVersionAnnotation = "ai-grid/version"
+
+	// argoSyncOptionsAnnotation holds the Argo CD sync options of one
+	// object, comma-separated.
+	argoSyncOptionsAnnotation = "argocd.argoproj.io/sync-options"
+	// argoDeleteOption is the Argo CD sync option that decides whether
+	// deleting an Application with the resources finalizer deletes the
+	// object. Argo CD reads the first Delete=<value> in the list.
+	argoDeleteOption = "Delete"
+	// argoDeleteFalse keeps the object when its Application is deleted. It
+	// doesn't stop pruning: when the file leaves Git, a sync of an
+	// Application with prune enabled still deletes the object.
+	argoDeleteFalse = argoDeleteOption + "=false"
 )
 
 func subscriptionGitPath(id string) string {
@@ -43,6 +55,9 @@ func subscriptionGitPath(id string) string {
 type subscriptionDoc struct {
 	sub    *aigridv1.Subscription
 	policy *aigridv1.AuthPolicy
+	// syncOptions is the MaaSSubscription's Argo CD sync options annotation
+	// as the file has it, which an update keeps (withArgoDeleteFalse).
+	syncOptions string
 }
 
 func (s *SubscriptionsServer) gitList(ctx context.Context) ([]*aigridv1.Subscription, error) {
@@ -334,7 +349,7 @@ func (s *SubscriptionsServer) gitCreateOn(ctx context.Context, head gitops.Snaps
 	if err != nil {
 		return nil, err
 	}
-	doc, err := s.gitCommit(ctx, head.Revision(), "create", object, 1, read)
+	doc, err := s.gitCommit(ctx, head.Revision(), "create", object, 1, "", read)
 	if err != nil {
 		return nil, err
 	}
@@ -404,7 +419,7 @@ func (s *SubscriptionsServer) gitUpdateOn(ctx context.Context, head gitops.Snaps
 			return nil, err
 		}
 	}
-	doc, err := s.gitCommit(ctx, head.Revision(), "update", candidate, currentVersion+1, read)
+	doc, err := s.gitCommit(ctx, head.Revision(), "update", candidate, currentVersion+1, current.syncOptions, read)
 	if err != nil {
 		return nil, err
 	}
@@ -470,10 +485,12 @@ func (s *SubscriptionsServer) gitEnsureModelsExist(head gitops.Snapshot, op stri
 }
 
 // gitCommit writes object's file at version on top of base and returns the
-// subscription as read back from that file. read is the commit's read set.
-func (s *SubscriptionsServer) gitCommit(ctx context.Context, base, op string, object *aigridv1.Subscription, version int32, read []string) (*subscriptionDoc, error) {
+// subscription as read back from that file. syncOptions is the file's Argo CD
+// sync options annotation before the write ("" for a new file). read is the
+// commit's read set.
+func (s *SubscriptionsServer) gitCommit(ctx context.Context, base, op string, object *aigridv1.Subscription, version int32, syncOptions string, read []string) (*subscriptionDoc, error) {
 	id := subscriptionID(object)
-	data, err := renderSubscriptionDoc(object, s.namespace, version)
+	data, err := renderSubscriptionDoc(object, s.namespace, version, syncOptions)
 	if err != nil {
 		return nil, err
 	}
@@ -565,11 +582,24 @@ func qualifiedOwnerGroups(spec *aigridv1.SubscriptionSpec) ([]string, error) {
 }
 
 // renderSubscriptionDoc renders the subscription file: the MaaSSubscription,
-// with the version annotation, and its managed MaaSAuthPolicy. Owner groups
-// are qualified with the organization in both. A model ref without a
-// namespace gets the subscription's namespace, where the Models API writes
-// each model's MaaSModelRef.
-func renderSubscriptionDoc(object *aigridv1.Subscription, namespace string, version int32) ([]byte, error) {
+// with the version annotation and the Argo CD sync option Delete=false added
+// to syncOptions (withArgoDeleteFalse), and its managed MaaSAuthPolicy, with
+// neither. Owner groups are qualified with the organization in both. A model
+// ref without a namespace gets the subscription's namespace, where the
+// Models API writes each model's MaaSModelRef.
+//
+// Delete=false keeps an ingress cluster's MaaSSubscription when that
+// cluster's catalog Application is deleted, as when the cluster is removed
+// from the grid: MaaS revokes every API key of a subscription whose
+// MaaSSubscription is deleted on any cluster, in the key database the
+// clusters share, so deleting one cluster's copy would revoke the keys on
+// all of them. The policy is still deleted there, and a cluster with no
+// policy refuses the subscription's users. Deleting the file in Git still
+// prunes both objects from every cluster, and so revokes the keys. It doesn't
+// make a role change to inference safe: that turns MaaS off on the cluster,
+// and deleting its AITenant revokes every key of the tenant
+// (checkRoleChange).
+func renderSubscriptionDoc(object *aigridv1.Subscription, namespace string, version int32, syncOptions string) ([]byte, error) {
 	id := subscriptionID(object)
 	qualified := proto.CloneOf(object)
 	groups, err := qualifiedOwnerGroups(qualified.GetSpec())
@@ -591,6 +621,7 @@ func renderSubscriptionDoc(object *aigridv1.Subscription, namespace string, vers
 		annotations = map[string]string{}
 	}
 	annotations[gitVersionAnnotation] = strconv.FormatInt(int64(version), 10)
+	annotations[argoSyncOptionsAnnotation] = withArgoDeleteFalse(syncOptions)
 	sub.SetAnnotations(annotations)
 
 	data, err := marshalYAMLDocs(sub, authPolicyFromSubscription(qualified, namespace))
@@ -613,7 +644,8 @@ func readSubscriptionDoc(head gitops.Snapshot, id string) (*subscriptionDoc, err
 }
 
 // parseSubscriptionDoc reverses renderSubscriptionDoc: it moves the version
-// annotation to metadata.version and strips the organization from owner
+// annotation to metadata.version, moves the Argo CD sync options annotation
+// out of the metadata a read returns, and strips the organization from owner
 // groups.
 func parseSubscriptionDoc(id string, data []byte) (*subscriptionDoc, error) {
 	docs, err := unmarshalYAMLDocs(data)
@@ -640,6 +672,8 @@ func parseSubscriptionDoc(id string, data []byte) (*subscriptionDoc, error) {
 	}
 	meta.Version = int32(version)
 	delete(meta.Annotations, gitVersionAnnotation)
+	doc.syncOptions = meta.Annotations[argoSyncOptionsAnnotation]
+	delete(meta.Annotations, argoSyncOptionsAnnotation)
 	if len(meta.Annotations) == 0 {
 		meta.Annotations = nil
 	}
@@ -651,6 +685,24 @@ func parseSubscriptionDoc(id string, data []byte) (*subscriptionDoc, error) {
 		}
 	}
 	return doc, nil
+}
+
+// withArgoDeleteFalse returns the sync options list options with Delete=false
+// in place of any other Delete option, keeping every other option once, in
+// order. Argo CD reads the first Delete=<value> in the list, so an existing
+// Delete=true or Delete=confirm would hide an appended Delete=false.
+func withArgoDeleteFalse(options string) string {
+	var out []string
+	seen := map[string]bool{}
+	for _, item := range strings.Split(options, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" || seen[item] || strings.HasPrefix(item, argoDeleteOption+"=") {
+			continue
+		}
+		seen[item] = true
+		out = append(out, item)
+	}
+	return strings.Join(append(out, argoDeleteFalse), ",")
 }
 
 // marshalYAMLDocs renders objects as one multi-document YAML file.
