@@ -843,6 +843,28 @@ func TestCreateTenant(t *testing.T) {
 		if store.mappers["acme"].Config["attribute.value"] != got.GetObject().GetId() {
 			t.Fatalf("mapper value = %q, want org id", store.mappers["acme"].Config["attribute.value"])
 		}
+		domains := store.byID[got.GetObject().GetId()].Domains
+		if len(domains) != 1 || domains[0].Name != "acme.example.com" || domains[0].IdentityProviderAlias != "acme" || !domains[0].AutoRedirect {
+			t.Fatalf("domains = %+v, want acme.example.com routed to IdP acme with autoRedirect", domains)
+		}
+	})
+
+	t.Run("with identity provider and no domains writes no routing", func(t *testing.T) {
+		t.Parallel()
+		store := newFakeOrganizationStore()
+		secrets := &fakeSecretReader{secrets: map[string][]byte{"acme-idp-secret": []byte("s3cret")}}
+		server := mustTenantsServerWithSecrets(t, store, secrets)
+		if _, err := server.Create(context.Background(), &aigridv1.TenantsCreateRequest{
+			Object: &aigridv1.Tenant{
+				Metadata: &aigridv1.Metadata{Name: "acme"},
+				Spec:     &aigridv1.TenantSpec{IdentityProvider: validCreateIdP()},
+			},
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		if store.puts != 0 {
+			t.Fatalf("unexpected organization write: puts=%d", store.puts)
+		}
 	})
 
 	t.Run("missing secret", func(t *testing.T) {
@@ -1024,6 +1046,35 @@ func TestUpdateTenantIdentityProvider(t *testing.T) {
 		}
 		if got := store.mappers["acme"].Config["attribute.value"]; got != "org-1" {
 			t.Fatalf("mapper org id = %q, want org-1", got)
+		}
+	})
+
+	t.Run("added domain is routed to the linked idp", func(t *testing.T) {
+		t.Parallel()
+		linked := org
+		linked.Domains = []keycloak.OrganizationDomain{{Name: "acme.example.com", IdentityProviderAlias: "acme", AutoRedirect: true}}
+		store := newFakeOrganizationStore(linked)
+		store.idps["acme"] = keycloak.IdentityProvider{Alias: "acme"}
+		store.links["org-1"] = "acme"
+		server := mustTenantsServer(t, store)
+		_, err := server.Update(ctx, &aigridv1.TenantsUpdateRequest{
+			Object: &aigridv1.Tenant{
+				Id: "org-1", Metadata: &aigridv1.Metadata{Version: 1},
+				Spec: &aigridv1.TenantSpec{Domains: []string{"acme.example.com", "acme.example.org"}},
+			},
+			UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"spec.domains"}},
+		})
+		if err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+		domains := store.byID["org-1"].Domains
+		if len(domains) != 2 {
+			t.Fatalf("domains = %+v", domains)
+		}
+		for _, d := range domains {
+			if d.IdentityProviderAlias != "acme" || !d.AutoRedirect {
+				t.Fatalf("domain %s = %+v, want routed to IdP acme with autoRedirect", d.Name, d)
+			}
 		}
 	})
 
@@ -1492,6 +1543,12 @@ func (f *fakeOrganizationStore) UpdateOrganization(_ context.Context, org keyclo
 	for id, other := range f.byID {
 		if id != org.ID && other.Name == org.Name {
 			return keycloak.Organization{}, &keycloak.APIError{Op: "update organization", StatusCode: http.StatusConflict}
+		}
+	}
+	// Keycloak rejects a domain that names an IdP not linked to this organization.
+	for _, d := range org.Domains {
+		if d.IdentityProviderAlias != "" && f.links[org.ID] != d.IdentityProviderAlias {
+			return keycloak.Organization{}, &keycloak.APIError{Op: "update organization", StatusCode: http.StatusBadRequest}
 		}
 	}
 	f.puts++
