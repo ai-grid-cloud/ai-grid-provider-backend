@@ -247,6 +247,11 @@ func (s *TenantsServer) Create(ctx context.Context, req *aigridv1.TenantsCreateR
 	}
 	if normalizedIdP != nil {
 		idpCreated, setupErr := s.setupIdentityProvider(ctx, created, normalizedIdP)
+		if setupErr == nil && len(created.Domains) > 0 {
+			// Only now that the IdP is linked may a domain name it.
+			created.Domains = routeDomainsToIdentityProvider(created.Domains, identityProviderAliasOf(created))
+			created, setupErr = s.updateRoutedOrganization(ctx, created)
+		}
 		if setupErr != nil {
 			return nil, s.cleanupIdentityProviderCreate(ctx, created.ID, created.Alias, idpCreated, setupErr)
 		}
@@ -334,6 +339,13 @@ func (s *TenantsServer) Update(ctx context.Context, req *aigridv1.TenantsUpdateR
 		if err := validateTenantDomains(next.Domains); err != nil {
 			return nil, err
 		}
+		storedIdP, err := identityProviderFromOrganizationAttrs(current.Attributes)
+		if err != nil {
+			return nil, connect.Errorf(connect.CodeInternal, "read identity provider: %v", err)
+		}
+		if storedIdP != nil {
+			next.Domains = routeDomainsToIdentityProvider(next.Domains, identityProviderAliasOf(current))
+		}
 	}
 
 	// The rest of the representation, attributes this backend doesn't own
@@ -369,6 +381,43 @@ func (s *TenantsServer) Update(ctx context.Context, req *aigridv1.TenantsUpdateR
 	return &aigridv1.TenantsUpdateResponse{Object: tenant}, nil
 }
 
+// identityProviderAliasOf is the alias of the IdP linked to an organization:
+// the organization's alias, or its name when it has none.
+func identityProviderAliasOf(org keycloak.Organization) string {
+	if org.Alias != "" {
+		return org.Alias
+	}
+	return org.Name
+}
+
+// routeDomainsToIdentityProvider points every domain at the organization's
+// identity provider with autoRedirect, so Keycloak's identity-first login sends
+// a user whose email domain matches straight to the tenant's login server
+// instead of showing a button.
+func routeDomainsToIdentityProvider(domains []keycloak.OrganizationDomain, alias string) []keycloak.OrganizationDomain {
+	routed := make([]keycloak.OrganizationDomain, len(domains))
+	for i, d := range domains {
+		d.IdentityProviderAlias = alias
+		d.AutoRedirect = true
+		routed[i] = d
+	}
+	return routed
+}
+
+// updateRoutedOrganization writes the organization back after Create routed its
+// domains, accepting a write whose read-back failed.
+func (s *TenantsServer) updateRoutedOrganization(ctx context.Context, org keycloak.Organization) (keycloak.Organization, error) {
+	updated, err := s.tenants.UpdateOrganization(ctx, org)
+	if readBack := (*keycloak.ReadBackError)(nil); errors.As(err, &readBack) {
+		s.logger.WarnContext(ctx, "tenant domains routed, but reading it back failed", "id", org.ID, "error", readBack.Err)
+		return readBack.Written, nil
+	}
+	if err != nil {
+		return org, mapTenantKeycloakError("route domains to identity provider", org.ID, err)
+	}
+	return updated, nil
+}
+
 // refreshIdentityProviderMappers upserts the broker mappers of an organization's linked
 // identity provider with its current id and name. An organization without one is left alone.
 func (s *TenantsServer) refreshIdentityProviderMappers(ctx context.Context, org keycloak.Organization) error {
@@ -379,10 +428,7 @@ func (s *TenantsServer) refreshIdentityProviderMappers(ctx context.Context, org 
 	if storedIdP == nil {
 		return nil
 	}
-	alias := org.Alias
-	if alias == "" {
-		alias = org.Name
-	}
+	alias := identityProviderAliasOf(org)
 	if err := s.tenants.UpsertIdentityProviderMapper(ctx, alias, org.ID, org.Name); err != nil {
 		return mapTenantKeycloakError("update identity provider mappers", alias, err)
 	}
