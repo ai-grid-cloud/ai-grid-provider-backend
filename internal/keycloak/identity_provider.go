@@ -9,7 +9,12 @@ import (
 	"net/url"
 )
 
-const identityProviderOrgIDMapperName = "AI Grid org id"
+const (
+	identityProviderOrgIDMapperName   = "AI Grid org id"
+	identityProviderOrgNameMapperName = "AI Grid org name"
+	identityProviderGroupsMapperName  = "AI Grid groups"
+	identityProviderRolesMapperName   = "AI Grid roles"
+)
 
 // IdentityProvider is a realm-level identity provider instance.
 type IdentityProvider struct {
@@ -101,45 +106,65 @@ func (c *Client) ConfigureOrganizationIdentityProvider(ctx context.Context, orgI
 	return c.doJSON(ctx, http.MethodPut, c.orgIdpAliasURL(orgID, alias), token, payload, nil, "configure organization identity provider")
 }
 
-// UpsertIdentityProviderMapper creates or updates the AI Grid org id hardcoded-attribute mapper.
-func (c *Client) UpsertIdentityProviderMapper(ctx context.Context, alias, organizationID string) error {
+// UpsertIdentityProviderMapper creates or updates the broker mappers that put the AI Grid
+// identity claims on a tenant user: the organization id and name (fixed per IdP), and the
+// tenant IdP's groups and roles claims, copied on every login (FORCE). The realm's client
+// scopes turn the maas_* user attributes into the flat org_id, org_name, groups and roles
+// token claims (ODH-ADR-MS-0007).
+func (c *Client) UpsertIdentityProviderMapper(ctx context.Context, alias, organizationID, organizationName string) error {
 	if alias == "" || organizationID == "" {
 		return fmt.Errorf("identity provider alias and organization id are required")
+	}
+	if organizationName == "" {
+		organizationName = alias
 	}
 	token, err := c.token(ctx)
 	if err != nil {
 		return err
 	}
-	var mappers []IdentityProviderMapper
-	if err := c.doJSON(ctx, http.MethodGet, c.idpMappersURL(alias), token, nil, &mappers, "list identity provider mappers"); err != nil {
+	var existing []IdentityProviderMapper
+	if err := c.doJSON(ctx, http.MethodGet, c.idpMappersURL(alias), token, nil, &existing, "list identity provider mappers"); err != nil {
 		return err
 	}
-	mapper := IdentityProviderMapper{
-		Name:                   identityProviderOrgIDMapperName,
-		IdentityProviderAlias:  alias,
-		IdentityProviderMapper: "hardcoded-attribute-idp-mapper",
-		Config: map[string]string{
-			"attribute":       "maas_org_id",
-			"attribute.value": organizationID,
-			"syncMode":        "FORCE",
-		},
-	}
-	for _, existing := range mappers {
-		if existing.Name != identityProviderOrgIDMapperName {
-			continue
+	for _, mapper := range identityProviderMappers(alias, organizationID, organizationName) {
+		method, url, op := http.MethodPost, c.idpMappersURL(alias), "create identity provider mapper"
+		for _, e := range existing {
+			if e.Name == mapper.Name {
+				mapper.ID = e.ID
+				method, url, op = http.MethodPut, c.idpMapperURL(alias, e.ID), "update identity provider mapper"
+				break
+			}
 		}
-		mapper.ID = existing.ID
 		payload, err := json.Marshal(mapper)
 		if err != nil {
 			return fmt.Errorf("marshal identity provider mapper: %w", err)
 		}
-		return c.doJSON(ctx, http.MethodPut, c.idpMapperURL(alias, existing.ID), token, payload, nil, "update identity provider mapper")
+		if err := c.doJSON(ctx, method, url, token, payload, nil, op); err != nil {
+			return err
+		}
 	}
-	payload, err := json.Marshal(mapper)
-	if err != nil {
-		return fmt.Errorf("marshal identity provider mapper: %w", err)
+	return nil
+}
+
+func identityProviderMappers(alias, organizationID, organizationName string) []IdentityProviderMapper {
+	hardcoded := func(name, attribute, value string) IdentityProviderMapper {
+		return IdentityProviderMapper{
+			Name: name, IdentityProviderAlias: alias, IdentityProviderMapper: "hardcoded-attribute-idp-mapper",
+			Config: map[string]string{"attribute": attribute, "attribute.value": value, "syncMode": "FORCE"},
+		}
 	}
-	return c.doJSON(ctx, http.MethodPost, c.idpMappersURL(alias), token, payload, nil, "create identity provider mapper")
+	fromClaim := func(name, claim, attribute string) IdentityProviderMapper {
+		return IdentityProviderMapper{
+			Name: name, IdentityProviderAlias: alias, IdentityProviderMapper: "oidc-user-attribute-idp-mapper",
+			Config: map[string]string{"claim": claim, "user.attribute": attribute, "syncMode": "FORCE"},
+		}
+	}
+	return []IdentityProviderMapper{
+		hardcoded(identityProviderOrgIDMapperName, "maas_org_id", organizationID),
+		hardcoded(identityProviderOrgNameMapperName, "maas_org_name", organizationName),
+		fromClaim(identityProviderGroupsMapperName, "groups", "maas_groups"),
+		fromClaim(identityProviderRolesMapperName, "roles", "maas_roles"),
+	}
 }
 
 func (c *Client) idpInstancesURL() string {
