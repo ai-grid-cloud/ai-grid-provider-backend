@@ -55,7 +55,7 @@ type organizationClient interface {
 	DeleteIdentityProvider(ctx context.Context, alias string) error
 	LinkOrganizationIdentityProvider(ctx context.Context, orgID, alias string) error
 	ConfigureOrganizationIdentityProvider(ctx context.Context, orgID, alias string) error
-	UpsertIdentityProviderMapper(ctx context.Context, alias, organizationID string) error
+	UpsertIdentityProviderMapper(ctx context.Context, alias, organizationID, organizationName string) error
 }
 
 // TenantsServerBuilder configures a TenantsServer.
@@ -702,7 +702,7 @@ func (s *TenantsServer) setupIdentityProvider(ctx context.Context, org keycloak.
 	if err := s.tenants.ConfigureOrganizationIdentityProvider(ctx, org.ID, alias); err != nil {
 		return idpCreated, mapTenantKeycloakError("configure identity provider", alias, err)
 	}
-	if err := s.tenants.UpsertIdentityProviderMapper(ctx, alias, org.ID); err != nil {
+	if err := s.tenants.UpsertIdentityProviderMapper(ctx, alias, org.ID, org.Name); err != nil {
 		return idpCreated, mapTenantKeycloakError("upsert identity provider mapper", alias, err)
 	}
 	return idpCreated, nil

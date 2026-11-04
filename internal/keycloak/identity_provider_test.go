@@ -118,34 +118,51 @@ func TestConfigureOrganizationIdentityProvider(t *testing.T) {
 
 func TestUpsertIdentityProviderMapper(t *testing.T) {
 	t.Parallel()
-	t.Run("create when missing", func(t *testing.T) {
+	t.Run("create all four when missing", func(t *testing.T) {
 		t.Parallel()
-		var createBody IdentityProviderMapper
-		var created bool
+		created := map[string]IdentityProviderMapper{}
 		server := httptest.NewServer(tokenThen(func(w http.ResponseWriter, r *http.Request) {
 			switch {
 			case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/mappers"):
 				_ = json.NewEncoder(w).Encode([]IdentityProviderMapper{})
 			case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/mappers"):
-				created = true
-				_ = json.NewDecoder(r.Body).Decode(&createBody)
+				var m IdentityProviderMapper
+				_ = json.NewDecoder(r.Body).Decode(&m)
+				created[m.Name] = m
 				w.WriteHeader(http.StatusCreated)
 			default:
 				http.NotFound(w, r)
 			}
 		}))
 		t.Cleanup(server.Close)
-		if err := testClient(server).UpsertIdentityProviderMapper(context.Background(), "acme", "uuid-1"); err != nil {
+		if err := testClient(server).UpsertIdentityProviderMapper(context.Background(), "acme", "uuid-1", "Acme"); err != nil {
 			t.Fatalf("Upsert: %v", err)
 		}
-		if !created || createBody.Name != "AI Grid org id" || createBody.Config["attribute"] != "maas_org_id" || createBody.Config["attribute.value"] != "uuid-1" {
-			t.Fatalf("created=%v body=%+v", created, createBody)
+		want := map[string][2]string{
+			"AI Grid org id":   {"maas_org_id", "uuid-1"},
+			"AI Grid org name": {"maas_org_name", "Acme"},
+		}
+		for name, w := range want {
+			m := created[name]
+			if m.IdentityProviderMapper != "hardcoded-attribute-idp-mapper" || m.Config["attribute"] != w[0] || m.Config["attribute.value"] != w[1] || m.Config["syncMode"] != "FORCE" {
+				t.Fatalf("%s = %+v", name, m)
+			}
+		}
+		for name, claim := range map[string]string{"AI Grid groups": "groups", "AI Grid roles": "roles"} {
+			m := created[name]
+			if m.IdentityProviderMapper != "oidc-user-attribute-idp-mapper" || m.Config["claim"] != claim || m.Config["user.attribute"] != "maas_"+claim || m.Config["syncMode"] != "FORCE" {
+				t.Fatalf("%s = %+v", name, m)
+			}
+		}
+		if len(created) != 4 {
+			t.Fatalf("created %d mappers, want 4", len(created))
 		}
 	})
-	t.Run("update when present", func(t *testing.T) {
+	t.Run("update existing, create the rest", func(t *testing.T) {
 		t.Parallel()
 		var updatePath string
 		var updateBody IdentityProviderMapper
+		posts := 0
 		server := httptest.NewServer(tokenThen(func(w http.ResponseWriter, r *http.Request) {
 			switch {
 			case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/mappers"):
@@ -156,16 +173,19 @@ func TestUpsertIdentityProviderMapper(t *testing.T) {
 				updatePath = r.URL.Path
 				_ = json.NewDecoder(r.Body).Decode(&updateBody)
 				w.WriteHeader(http.StatusNoContent)
+			case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/mappers"):
+				posts++
+				w.WriteHeader(http.StatusCreated)
 			default:
 				http.NotFound(w, r)
 			}
 		}))
 		t.Cleanup(server.Close)
-		if err := testClient(server).UpsertIdentityProviderMapper(context.Background(), "acme", "uuid-2"); err != nil {
+		if err := testClient(server).UpsertIdentityProviderMapper(context.Background(), "acme", "uuid-2", "Acme"); err != nil {
 			t.Fatalf("Upsert: %v", err)
 		}
-		if !strings.HasSuffix(updatePath, "/mappers/mapper-1") || updateBody.Config["attribute.value"] != "uuid-2" {
-			t.Fatalf("path=%s body=%+v", updatePath, updateBody)
+		if !strings.HasSuffix(updatePath, "/mappers/mapper-1") || updateBody.Config["attribute.value"] != "uuid-2" || posts != 3 {
+			t.Fatalf("path=%s body=%+v posts=%d", updatePath, updateBody, posts)
 		}
 	})
 }

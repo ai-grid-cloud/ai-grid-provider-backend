@@ -411,7 +411,7 @@ type organizationClient interface {
 	DeleteIdentityProvider(ctx context.Context, alias string) error
 	LinkOrganizationIdentityProvider(ctx context.Context, orgID, alias string) error
 	ConfigureOrganizationIdentityProvider(ctx context.Context, orgID, alias string) error
-	UpsertIdentityProviderMapper(ctx context.Context, alias, organizationID string) error
+	UpsertIdentityProviderMapper(ctx context.Context, alias, organizationID, organizationName string) error
 }
 
 type mutableOrganizationStore struct {
@@ -484,7 +484,7 @@ func (f *mutableOrganizationStore) LinkOrganizationIdentityProvider(context.Cont
 func (f *mutableOrganizationStore) ConfigureOrganizationIdentityProvider(context.Context, string, string) error {
 	return nil
 }
-func (f *mutableOrganizationStore) UpsertIdentityProviderMapper(context.Context, string, string) error {
+func (f *mutableOrganizationStore) UpsertIdentityProviderMapper(context.Context, string, string, string) error {
 	return nil
 }
 
@@ -623,7 +623,7 @@ func (f fakeOrganizationLister) LinkOrganizationIdentityProvider(context.Context
 func (f fakeOrganizationLister) ConfigureOrganizationIdentityProvider(context.Context, string, string) error {
 	return errors.New("ConfigureOrganizationIdentityProvider not implemented in list-only fake")
 }
-func (f fakeOrganizationLister) UpsertIdentityProviderMapper(context.Context, string, string) error {
+func (f fakeOrganizationLister) UpsertIdentityProviderMapper(context.Context, string, string, string) error {
 	return errors.New("UpsertIdentityProviderMapper not implemented in list-only fake")
 }
 

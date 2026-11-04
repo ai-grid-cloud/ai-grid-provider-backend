@@ -1548,7 +1548,7 @@ func (f *fakeOrganizationStore) ConfigureOrganizationIdentityProvider(_ context.
 	return nil
 }
 
-func (f *fakeOrganizationStore) UpsertIdentityProviderMapper(_ context.Context, alias, organizationID string) error {
+func (f *fakeOrganizationStore) UpsertIdentityProviderMapper(_ context.Context, alias, organizationID, _ string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.mapperErr != nil {
