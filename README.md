@@ -81,9 +81,14 @@ derives, so no client has to:
   role is allowed. Then, for a member whose role changes or that leaves the
   grid, these are `FailedPrecondition`, the first that applies answering:
   it stops serving ingress (`ingress` or `combined` to a role without
-  ingress, or leaving) while the Git catalog has any subscription, because
-  Argo CD then deletes its copies of every subscription and maas-controller
-  revokes their API keys in the shared maas-db, on all clusters; it stops
+  ingress, or leaving) while it serves any subscription (ACM Search, else the
+  Git catalog), because Argo CD then deletes its copies and maas-controller
+  revokes their API keys in the shared maas-db, on all clusters, or the
+  `inference` role turns MaaS off there; a removal from the grid while
+  another member serves ingress doesn't count the subscriptions that carry
+  `Delete=false` (the `ai-grid/kept-on-removal: "true"` label on the
+  cluster's copy, as ACM Search shows it; without Search the catalog's
+  always count), because the cluster keeps those; it stops
   serving ingress while it is the grid's last ingress cluster and the grid
   keeps a member; it stops serving inference (`inference` or `combined` to
   a role without inference), or leaves whatever its role, while the catalog
@@ -305,14 +310,28 @@ For subscriptions:
   a cluster's `acm-models-catalog-subscriptions-<cluster>` Application has
   synced the change, removing that cluster from the grid still revokes the
   keys. So after pushing, wait until every ingress cluster's Application is
-  `Synced` at that commit before removing any cluster.
+  `Synced` at that commit before removing any cluster. The script adds the
+  label too, and Clusters/Update refuses the removal until Search shows the
+  label on the cluster's copy of every subscription.
 - `Delete=false` covers a cluster leaving the grid, not a role change. A
   change to the `inference` role turns MaaS off on the cluster, which deletes
   its `AITenant`, and deleting an `AITenant` revokes every API key of that
   tenant in the shared database; the grid has one tenant, so that can be every
   key in AI Grid. Clusters/Update keeps refusing a role change away from
-  ingress while the cluster serves any subscription
+  ingress while the cluster serves any subscription, and allows a removal
+  from the grid while another cluster serves ingress only when ACM Search
+  shows every subscription on the cluster kept. A backend without Search
+  (`--search-api-url=off`) refuses the removal while the catalog has any
+  subscription, because a file in Git says nothing about the copy on the
+  cluster
   ([Cluster membership](#cluster-membership-state-and-location)).
+- The `MaaSSubscription` also carries the label
+  `ai-grid/kept-on-removal: "true"`. ACM Search indexes a custom resource's
+  labels but not its annotations, so Clusters/Update reads this label on the
+  cluster's live copy to know that copy has `Delete=false`. A subscription
+  delivered from elsewhere, such as an organization's own in the GitOps
+  repository, needs both the annotation and the label to count as kept.
+  Reads don't return the label.
 - A cluster removed from the grid keeps an orphaned copy of each
   `MaaSSubscription` it had. The copies stay there until MaaS has a
   supported way to delete a subscription without revoking its keys

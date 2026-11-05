@@ -13,6 +13,7 @@ import (
 	"github.com/osac-project/ai-grid-provider-backend/internal/gitops"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 // labelAIGridRole picks what the hub installs on a grid cluster. The hub's
@@ -58,7 +59,7 @@ type catalogReader interface {
 // Search (acmsearch.Client) in production, which indexes the custom
 // resources of every managed cluster, MaaSSubscriptions included.
 type resourceSearch interface {
-	Resources(ctx context.Context, kind, apigroup, cluster string) ([]acmsearch.Resource, error)
+	Resources(ctx context.Context, kind, apigroup, cluster string, labelKeys ...string) ([]acmsearch.Resource, error)
 }
 
 // maasAPIGroup is the API group of MaaS's kinds
@@ -114,7 +115,11 @@ func checkRoleValue(current, result map[string]string) error {
 //     maas-controller/pkg/controller/maas/maassubscription_controller.go,
 //     handleDeletion), so they stop working on every cluster. MaaS itself
 //     stays: the rhoai ApplicationSet preserves what it installed
-//     (apps/rhoai/hub/01-applicationset.yaml);
+//     (apps/rhoai/hub/01-applicationset.yaml). A subscription with
+//     Delete=false stays on the cluster instead, so a cluster leaving the
+//     grid while another serves ingress isn't refused for those
+//     (checkNoSubscriptions). Losing the role while staying in the grid
+//     still refuses on them all, as before;
 //     - a change to the inference role does the same, and also turns MaaS
 //     off on the cluster: that role's profile sets modelsAsAService to
 //     Removed (opendatahub-io/odh-gitops, rhai-on-openshift-chart README).
@@ -125,8 +130,8 @@ func checkRoleValue(current, result map[string]string) error {
 //     that tenant in the shared maas-db (aitenant_controller.go;
 //     maas-api/internal/api_keys/store_postgres.go). The grid has one
 //     AITenant, models-as-a-service, so that can be every key in the grid,
-//     not only those of the cluster's subscriptions. This is read from those
-//     sources, not tried on a cluster;
+//     not only those of the cluster's subscriptions, and Delete=false
+//     doesn't help. This is read from those sources, not tried on a cluster;
 //  2. a cluster that serves ingress stops serving it while no other grid
 //     cluster does, and the grid keeps a member: users could reach no model.
 //     The grid's last member may leave: that retires the grid and strands
@@ -160,10 +165,11 @@ func (s *ClustersServer) checkRoleChange(ctx context.Context, id string, current
 	}
 	catalog := &catalogHead{reader: s.catalog}
 	if servesIngress(from) && (leaves || !servesIngress(to)) {
-		if err := s.checkNoSubscriptions(ctx, id, catalog, leaves, to); err != nil {
+		peers := &gridPeers{list: s.listManagedClusters, id: id}
+		if err := s.checkNoSubscriptions(ctx, id, catalog, peers, leaves, to); err != nil {
 			return err
 		}
-		if err := s.checkOtherIngress(ctx, id, leaves); err != nil {
+		if err := checkOtherIngress(ctx, id, peers, leaves); err != nil {
 			return err
 		}
 	}
@@ -175,31 +181,61 @@ func (s *ClustersServer) checkRoleChange(ctx context.Context, id string, current
 	return nil
 }
 
-// checkOtherIngress refuses when no grid cluster other than id serves
-// ingress, unless id leaves the grid and no other cluster is in it. A
-// cluster being deleted doesn't count: it is about to leave the grid.
-func (s *ClustersServer) checkOtherIngress(ctx context.Context, id string, leaves bool) error {
+// gridPeers reads, once, what the grid's other members serve: whether any
+// grid cluster other than id serves ingress, and whether the grid has any
+// other member. A cluster being deleted doesn't count: it is about to leave
+// the grid.
+type gridPeers struct {
+	list func(ctx context.Context) ([]unstructured.Unstructured, error)
+	id   string
+
+	read                      bool
+	otherIngress, otherMember bool
+	err                       error
+}
+
+func (p *gridPeers) get(ctx context.Context) (otherIngress, otherMember bool, err error) {
+	if !p.read {
+		p.read = true
+		var items []unstructured.Unstructured
+		if items, p.err = p.list(ctx); p.err == nil {
+			for i := range items {
+				item := &items[i]
+				labels := item.GetLabels()
+				if item.GetName() == p.id || item.GetDeletionTimestamp() != nil || !isAIGridMember(labels) {
+					continue
+				}
+				p.otherMember = true
+				if servesIngress(labels[labelAIGridRole]) {
+					p.otherIngress = true
+				}
+			}
+		}
+	}
+	return p.otherIngress, p.otherMember, p.err
+}
+
+// listManagedClusters lists the hub's ManagedClusters.
+func (s *ClustersServer) listManagedClusters(ctx context.Context) ([]unstructured.Unstructured, error) {
 	list, err := s.client.Resource(managedClustersResource).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		code := connect.CodeInternal
 		if apierrors.IsForbidden(err) || apierrors.IsUnauthorized(err) {
 			code = connect.CodePermissionDenied
 		}
-		return connect.Errorf(code, "list ManagedCluster resources: %v", err).WithCause(err)
+		return nil, connect.Errorf(code, "list ManagedCluster resources: %v", err).WithCause(err)
 	}
-	others := false
-	for i := range list.Items {
-		item := &list.Items[i]
-		labels := item.GetLabels()
-		if item.GetName() == id || item.GetDeletionTimestamp() != nil || !isAIGridMember(labels) {
-			continue
-		}
-		if servesIngress(labels[labelAIGridRole]) {
-			return nil
-		}
-		others = true
+	return list.Items, nil
+}
+
+// checkOtherIngress refuses when no grid cluster other than id serves
+// ingress, unless id leaves the grid and no other cluster is in it.
+func checkOtherIngress(ctx context.Context, id string, peers *gridPeers, leaves bool) error {
+	otherIngress, otherMember, err := peers.get(ctx)
+	if err != nil {
+		return err
 	}
-	if leaves && !others {
+	if otherIngress || (leaves && !otherMember) {
 		return nil
 	}
 	// The console shows this message to provider admins as it is.
@@ -242,16 +278,31 @@ func (c *catalogHead) get(ctx context.Context) (gitops.Snapshot, error) {
 }
 
 // checkNoSubscriptions refuses when cluster id serves ingress for any
-// subscription. They are the MaaSSubscriptions ACM Search indexes on the
-// cluster, whoever delivered them: the catalog's, an organization's from the
-// gitops repository, or one made by hand. When Search has none there, or the
-// backend has no Search (--search-api-url=off), the catalog's subscriptions
-// refuse instead, the files catalog/subscriptions/<id>.yaml
-// (subscriptionsGitDir) that Argo CD applies to every ingress cluster: a
-// subscription committed but not delivered yet, or a cluster whose Search
-// collector isn't reporting, still counts. A Search query that fails is
-// Unavailable, as a catalog that can't be read for that fallback is: the
-// change waits until the subscriptions can be checked.
+// subscription it would lose. They are the MaaSSubscriptions ACM Search
+// indexes on the cluster, whoever delivered them: the catalog's, an
+// organization's from the gitops repository, or one made by hand. When
+// Search has none there, or the backend has no Search
+// (--search-api-url=off), the catalog's subscriptions refuse instead, the
+// files catalog/subscriptions/<id>.yaml (subscriptionsGitDir) that Argo CD
+// applies to every ingress cluster: a subscription committed but not
+// delivered yet, or a cluster whose Search collector isn't reporting, still
+// counts. A Search query that fails is Unavailable, as a catalog that can't
+// be read for that fallback is: the change waits until the subscriptions can
+// be checked.
+//
+// A cluster that leaves the grid while another grid cluster serves ingress
+// keeps every subscription that carries the Argo CD sync option
+// Delete=false, so their keys stay valid on the other clusters; those don't
+// refuse. Only Search can tell: they are the subscriptions whose copy on the
+// cluster has keptOnRemovalLabel "true". Argo CD reads Delete=false from
+// that live copy, and Search indexes its labels, not its annotations, so a
+// file changed in Git but not synced to the cluster yet still refuses. The
+// catalog fallback keeps nothing, because a file in Git says nothing about
+// the copy on the cluster. A removal first lists the other members, and
+// answers that list's error if it fails, since without it nothing can be
+// kept. A role change, or the role removed while the cluster stays in the
+// grid, keeps nothing: it refuses on every subscription (checkRoleChange,
+// rule 1).
 //
 // The message names the subscriptions of whichever source found them and
 // says where they are managed, because the console lists and deletes only
@@ -264,13 +315,30 @@ func (c *catalogHead) get(ctx context.Context) (gitops.Snapshot, error) {
 // doesn't make the refusal Unavailable, since Search's answer alone refuses:
 // the message then doesn't say which subscription is managed where. The
 // catalog fallback's subscriptions are all the console's.
-func (s *ClustersServer) checkNoSubscriptions(ctx context.Context, id string, catalog *catalogHead, leaves bool, to string) error {
-	names, err := clusterSubscriptions(ctx, id, s.search)
+func (s *ClustersServer) checkNoSubscriptions(ctx context.Context, id string, catalog *catalogHead, peers *gridPeers, leaves bool, to string) error {
+	found, err := clusterSubscriptions(ctx, id, s.search)
 	if err != nil {
 		return err
 	}
+	keep := false
+	if leaves {
+		otherIngress, _, err := peers.get(ctx)
+		if err != nil {
+			return err
+		}
+		keep = otherIngress
+	}
 	var held heldSubscriptions
-	if len(names) > 0 {
+	if len(found) > 0 {
+		var names []string
+		for _, sub := range found {
+			if !keep || !sub.kept {
+				names = append(names, sub.name)
+			}
+		}
+		if len(names) == 0 {
+			return nil
+		}
 		held = s.splitByCatalog(ctx, id, names, catalog)
 	} else if held.inConsole, err = catalogSubscriptions(ctx, id, catalog); err != nil {
 		return err
@@ -367,22 +435,35 @@ func (h heldSubscriptions) refusal(id string, leaves bool, to string) error {
 	return connect.Errorf(connect.CodeFailedPrecondition, "Cluster %q serves ingress for %s. %s %s", id, serves, why, act)
 }
 
-// clusterSubscriptions returns the names of the MaaSSubscriptions ACM Search
-// indexes on cluster id, sorted, each once; none without a Search.
-func clusterSubscriptions(ctx context.Context, id string, search resourceSearch) ([]string, error) {
+// liveSubscription is a MaaSSubscription ACM Search indexes on a cluster:
+// its name, and whether that copy has keptOnRemovalLabel "true".
+type liveSubscription struct {
+	name string
+	kept bool
+}
+
+// clusterSubscriptions returns the MaaSSubscriptions ACM Search indexes on
+// cluster id, sorted by name, each name once (kept only if every copy of it
+// is); none without a Search.
+func clusterSubscriptions(ctx context.Context, id string, search resourceSearch) ([]liveSubscription, error) {
 	if search == nil {
 		return nil, nil
 	}
-	found, err := search.Resources(ctx, kindMaaSSubscription, maasAPIGroup, id)
+	found, err := search.Resources(ctx, kindMaaSSubscription, maasAPIGroup, id, keptOnRemovalLabel)
 	if err != nil {
 		return nil, connect.Errorf(connect.CodeUnavailable, "cluster %q: read its subscriptions from ACM Search: %v", id, err).WithCause(err)
 	}
-	names := make([]string, 0, len(found))
+	kept := map[string]bool{}
 	for _, r := range found {
-		names = append(names, r.Name)
+		k, seen := kept[r.Name]
+		kept[r.Name] = r.Labels[keptOnRemovalLabel] == "true" && (!seen || k)
 	}
-	slices.Sort(names)
-	return slices.Compact(names), nil
+	out := make([]liveSubscription, 0, len(kept))
+	for name, k := range kept {
+		out = append(out, liveSubscription{name: name, kept: k})
+	}
+	slices.SortFunc(out, func(a, b liveSubscription) int { return strings.Compare(a.name, b.name) })
+	return out, nil
 }
 
 // catalogSubscriptions returns the ids of the catalog's subscriptions, the

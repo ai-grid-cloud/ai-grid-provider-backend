@@ -58,6 +58,14 @@ const (
 	// doesn't stop pruning: when the file leaves Git, a sync of an
 	// Application with prune enabled still deletes the object.
 	argoDeleteFalse = argoDeleteOption + "=false"
+
+	// keptOnRemovalLabel, "true", marks a MaaSSubscription that carries
+	// Delete=false, so a cluster removed from the grid keeps it. ACM Search
+	// indexes labels but not a custom resource's annotations, so the cluster
+	// role checks read this label on each cluster's live copy
+	// (checkNoSubscriptions). Whoever sets Delete=false on a subscription
+	// outside the catalog sets this label with it.
+	keptOnRemovalLabel = "ai-grid/kept-on-removal"
 )
 
 func subscriptionGitPath(id string) string {
@@ -643,9 +651,9 @@ func qualifiedOwnerGroups(spec *aigridv1.SubscriptionSpec) ([]string, error) {
 }
 
 // renderSubscriptionDoc renders the subscription file: the MaaSSubscription,
-// with the version annotation and the Argo CD sync option Delete=false added
-// to syncOptions (withArgoDeleteFalse), and its managed MaaSAuthPolicy, with
-// neither. Owner groups are qualified with the organization in both. A model
+// with the version annotation, the Argo CD sync option Delete=false added to
+// syncOptions (withArgoDeleteFalse) and keptOnRemovalLabel, and its managed
+// MaaSAuthPolicy, with none of them. Owner groups are qualified with the organization in both. A model
 // ref without a namespace gets the subscription's namespace, where the
 // Models API writes each model's MaaSModelRef.
 //
@@ -684,6 +692,12 @@ func renderSubscriptionDoc(object *aigridv1.Subscription, namespace string, vers
 	annotations[gitVersionAnnotation] = strconv.FormatInt(int64(version), 10)
 	annotations[argoSyncOptionsAnnotation] = withArgoDeleteFalse(syncOptions)
 	sub.SetAnnotations(annotations)
+	labels := sub.GetLabels()
+	if labels == nil {
+		labels = map[string]string{}
+	}
+	labels[keptOnRemovalLabel] = "true"
+	sub.SetLabels(labels)
 
 	data, err := marshalYAMLDocs(sub, authPolicyFromSubscription(qualified, namespace))
 	if err != nil {
@@ -706,7 +720,7 @@ func readSubscriptionDoc(head gitops.Snapshot, id string) (*subscriptionDoc, err
 
 // parseSubscriptionDoc reverses renderSubscriptionDoc: it moves the version
 // annotation to metadata.version, moves the Argo CD sync options annotation
-// out of the metadata a read returns, and strips the organization from owner
+// and keptOnRemovalLabel out of the metadata a read returns, and strips the organization from owner
 // groups.
 func parseSubscriptionDoc(id string, data []byte) (*subscriptionDoc, error) {
 	docs, err := unmarshalYAMLDocs(data)
@@ -737,6 +751,10 @@ func parseSubscriptionDoc(id string, data []byte) (*subscriptionDoc, error) {
 	delete(meta.Annotations, argoSyncOptionsAnnotation)
 	if len(meta.Annotations) == 0 {
 		meta.Annotations = nil
+	}
+	delete(meta.Labels, keptOnRemovalLabel)
+	if len(meta.Labels) == 0 {
+		meta.Labels = nil
 	}
 
 	prefix := doc.sub.GetSpec().GetOrganization().GetId() + "/"

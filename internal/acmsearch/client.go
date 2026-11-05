@@ -51,6 +51,9 @@ type Resource struct {
 	Namespace string
 	// Name is the resource's name.
 	Name string
+	// Labels are the resource's labels that the query named, parsed from
+	// Search's "k=v; k=v" form; nil when the query named none.
+	Labels map[string]string
 }
 
 // Client queries Search with a fixed bearer credential. Its http.Client
@@ -141,8 +144,8 @@ type graphQLResponse struct {
 }
 
 // searchItem is the part of a Search item the backend reads: `cluster`,
-// `namespace` and `name` of any kind, and of a Node `label` as "k=v; k=v"
-// and `condition` as "DiskPressure=False; ...; Ready=True" (the shape
+// `namespace`, `name` and `label` as "k=v; k=v" of any kind, and of a Node
+// `condition` as "DiskPressure=False; ...; Ready=True" (the shape
 // search-v2's collector indexes, as an ACM hub answered it). Every other key
 // of the item is skipped while decoding, without being kept.
 type searchItem struct {
@@ -208,10 +211,12 @@ func (c *Client) GPUNodes(ctx context.Context, labelKeys ...string) ([]Node, err
 // the managed cluster named cluster, sorted by namespace and then by name.
 // Search filters on exact values, so the kind is as the API names it (for
 // example MaaSSubscription) and apigroup is the group without its version
-// (for example maas.opendatahub.io). An error, Search's own included, is
-// never an empty list: a caller deciding on what the cluster holds must not
-// read a failed query as "nothing there".
-func (c *Client) Resources(ctx context.Context, kind, apigroup, cluster string) ([]Resource, error) {
+// (for example maas.opendatahub.io). Each resource's Labels hold only the
+// labelKeys it carries, as for GPUNodes. Search indexes a custom resource's
+// labels but, by default, not its annotations. An error, Search's own
+// included, is never an empty list: a caller deciding on what the cluster
+// holds must not read a failed query as "nothing there".
+func (c *Client) Resources(ctx context.Context, kind, apigroup, cluster string, labelKeys ...string) ([]Resource, error) {
 	items, err := c.search(ctx, []searchFilter{
 		{Property: "kind", Values: []string{kind}},
 		{Property: "apigroup", Values: []string{apigroup}},
@@ -220,9 +225,19 @@ func (c *Client) Resources(ctx context.Context, kind, apigroup, cluster string) 
 	if err != nil {
 		return nil, err
 	}
+	var keep map[string]bool
+	if len(labelKeys) > 0 {
+		keep = make(map[string]bool, len(labelKeys))
+		for _, k := range labelKeys {
+			keep[k] = true
+		}
+	}
 	out := []Resource{}
 	for _, item := range items {
 		r := Resource{Cluster: string(item.Cluster), Namespace: string(item.Namespace), Name: string(item.Name)}
+		if keep != nil {
+			r.Labels = parsePairs(string(item.Label), keep)
+		}
 		if r.Cluster == "" || r.Name == "" {
 			continue
 		}

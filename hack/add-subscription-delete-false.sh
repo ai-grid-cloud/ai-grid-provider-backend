@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # One-time migration for a catalog repository the backend wrote before it
 # gave each MaaSSubscription the Argo CD sync option Delete=false: adds that
-# option to every MaaSSubscription in catalog/subscriptions/*.yaml, as the
-# backend now writes it (see "Git catalog" in README.md). It keeps any other
-# sync option, once each, and replaces any other Delete option. It leaves the
+# option, and the label ai-grid/kept-on-removal: "true" that the backend's
+# cluster role checks read, to every MaaSSubscription in
+# catalog/subscriptions/*.yaml, as the backend now writes them (see "Git
+# catalog" in README.md). It keeps any other sync option, once each, and
+# replaces any other Delete option. It leaves the
 # MaaSAuthPolicy documents, the ai-grid/version annotation and every other
 # file as they are. Running it again changes nothing.
 #
@@ -17,7 +19,7 @@
 #
 # Needs bash and a mikefarah yq v4 with --yaml-compact-seq-indent (tested
 # with v4.54.1), which keeps the backend's list indentation, so the diff is
-# the annotation only.
+# the annotation and the label only.
 set -euo pipefail
 
 if [[ $# -ne 1 ]]; then
@@ -30,13 +32,15 @@ if [[ ! -d "$dir" ]]; then
   exit 1
 fi
 
-# Same result as withArgoDeleteFalse in internal/servers/subscriptions_git.go.
+# Same result as withArgoDeleteFalse and keptOnRemovalLabel in
+# internal/servers/subscriptions_git.go.
 expr='with(select(.kind == "MaaSSubscription");
   .metadata.annotations["argocd.argoproj.io/sync-options"] |= (
     ((. // "") | split(",")
       | map(sub("^\s+", "") | sub("\s+$", ""))
       | map(select(. != "" and (test("^Delete=") | not)))
-      | unique) + ["Delete=false"] | join(",")))'
+      | unique) + ["Delete=false"] | join(",")) |
+  .metadata.labels["ai-grid/kept-on-removal"] = "true")'
 
 shopt -s nullglob
 changed=0

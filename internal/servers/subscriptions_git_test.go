@@ -144,6 +144,9 @@ func TestSubscriptionsGitArgoDeleteFalse(t *testing.T) {
 	if _, ok := created.GetObject().GetMetadata().GetAnnotations()[argoSyncOptionsAnnotation]; ok {
 		t.Fatal("Create returned the sync options annotation")
 	}
+	if _, ok := created.GetObject().GetMetadata().GetLabels()[keptOnRemovalLabel]; ok {
+		t.Fatal("Create returned the kept-on-removal label")
+	}
 
 	// An update keeps it, whether or not it rewrites the metadata.
 	update := gitSampleSubscription("team-a")
@@ -158,6 +161,9 @@ func TestSubscriptionsGitArgoDeleteFalse(t *testing.T) {
 	}
 	if _, ok := got.GetObject().GetMetadata().GetAnnotations()[argoSyncOptionsAnnotation]; ok {
 		t.Fatal("Get returned the sync options annotation")
+	}
+	if _, ok := got.GetObject().GetMetadata().GetLabels()[keptOnRemovalLabel]; ok {
+		t.Fatal("Get returned the kept-on-removal label")
 	}
 	if _, err := srv.Update(ctx, &aigridv1.SubscriptionsUpdateRequest{Object: got.GetObject(), UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"metadata"}}}); err != nil {
 		t.Fatalf("Update(read metadata back) error = %v", err)
@@ -231,6 +237,13 @@ func assertArgoSyncOptions(t *testing.T, writer gitops.Writer, id, want string) 
 	}
 	if got, ok := policy.GetAnnotations()[argoSyncOptionsAnnotation]; ok {
 		t.Fatalf("file MaaSAuthPolicy %s = %q, want none: a cluster leaving the Placement must delete it", argoSyncOptionsAnnotation, got)
+	}
+	// The label the cluster role checks read through ACM Search.
+	if got := sub.GetLabels()[keptOnRemovalLabel]; got != "true" {
+		t.Fatalf("file MaaSSubscription label %s = %q, want true", keptOnRemovalLabel, got)
+	}
+	if got, ok := policy.GetLabels()[keptOnRemovalLabel]; ok {
+		t.Fatalf("file MaaSAuthPolicy label %s = %q, want none", keptOnRemovalLabel, got)
 	}
 }
 
