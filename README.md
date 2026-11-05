@@ -325,7 +325,17 @@ For subscriptions:
   reconciles a subscription that isn't being deleted.
 - A cluster that joins the grid again gets the catalog's Application back.
   Argo CD adopts an orphan whose file still exists, and prunes one whose file
-  is gone, which revokes by name again.
+  is gone, which revokes by name again. That revokes nothing new, because the
+  backend never gives a deleted subscription's name to another one (next
+  item).
+- A deleted subscription's name is never used again. MaaS revokes keys by
+  subscription name, so if a new subscription took the name, deleting an old
+  orphan anywhere would revoke the new one's keys on every cluster. Delete
+  writes `catalog/deleted-subscriptions/<id>` in the same commit, and Create
+  refuses an id that has one with `AlreadyExists`. No Argo CD Application
+  reads that directory. A subscription deleted before the backend kept these
+  records, or whose file was removed from Git by hand, has none, so its name
+  can be taken again; commit that file by hand to stop it.
 - A model ref without a namespace gets the subscription's namespace
   (`models-as-a-service` by default). A ref in that namespace must name a
   model in the repository, or Create and Update answer `FailedPrecondition`;

@@ -343,6 +343,72 @@ func TestSubscriptionsGitConcurrentDeletesKeepDirectory(t *testing.T) {
 	assertGitDirFiles(t, writer, subscriptionsGitDir, subscriptionsKeepFile)
 }
 
+// A deleted subscription's name is never used again: Delete records it in
+// catalog/deleted-subscriptions, which no list reads, and Create refuses it.
+// MaaS revokes keys by subscription name, and a cluster removed from the grid
+// keeps its copy of the old subscription, so deleting that copy later would
+// revoke a new subscription of the same name everywhere.
+func TestSubscriptionsGitDeletedNameNotReused(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	writer := gitops.NewMemoryWriter(gitModelSeed("sim-model"))
+	srv := mustGitSubscriptionsServer(t, writer)
+	for _, id := range []string{"team-a", "team-b"} {
+		if _, err := srv.Create(ctx, &aigridv1.SubscriptionsCreateRequest{Object: gitSampleSubscription(id)}); err != nil {
+			t.Fatalf("Create(%s) error = %v", id, err)
+		}
+	}
+	if _, err := srv.Delete(ctx, &aigridv1.SubscriptionsDeleteRequest{Id: "team-a"}); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	assertGitDirFiles(t, writer, deletedSubscriptionsGitDir, "team-a")
+	assertGitDirFiles(t, writer, subscriptionsGitDir, "team-b.yaml")
+	head, err := writer.Head(ctx)
+	if err != nil {
+		t.Fatalf("Head() error = %v", err)
+	}
+	if data, err := head.Read(deletedSubscriptionGitPath("team-a")); err != nil || string(data) != deletedSubscriptionText {
+		t.Fatalf("Read(%s) = %q, %v", deletedSubscriptionGitPath("team-a"), data, err)
+	}
+
+	_, err = srv.Create(ctx, &aigridv1.SubscriptionsCreateRequest{Object: gitSampleSubscription("team-a")})
+	assertConnectCode(t, err, connect.CodeAlreadyExists)
+	assertConnectMessage(t, err, `A subscription named "team-a" existed before and was deleted. Its name can't be used again, because clusters removed from AI Grid can still hold a copy of the old one. Choose another name.`)
+	assertGitDirFiles(t, writer, subscriptionsGitDir, "team-b.yaml")
+
+	if _, err := srv.Create(ctx, &aigridv1.SubscriptionsCreateRequest{Object: gitSampleSubscription("team-c")}); err != nil {
+		t.Fatalf("Create(team-c) error = %v", err)
+	}
+	list, err := srv.List(ctx, &aigridv1.SubscriptionsListRequest{})
+	if err != nil || list.GetTotal() != 2 {
+		t.Fatalf("List() = %v, %v, want team-b and team-c", list, err)
+	}
+}
+
+// A Create decided before another writer created and deleted the same id
+// conflicts on the deleted record, and its rerun refuses the name.
+func TestSubscriptionsGitCreateRacingADelete(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	writer := &racingWriter{MemoryWriter: gitops.NewMemoryWriter(gitModelSeed("sim-model"))}
+	srv := mustGitSubscriptionsServer(t, writer)
+	other := mustGitSubscriptionsServer(t, writer.MemoryWriter)
+	writer.race = func() {
+		if _, err := other.Create(ctx, &aigridv1.SubscriptionsCreateRequest{Object: gitSampleSubscription("team-a")}); err != nil {
+			t.Errorf("racing Create() error = %v", err)
+		}
+		if _, err := other.Delete(ctx, &aigridv1.SubscriptionsDeleteRequest{Id: "team-a"}); err != nil {
+			t.Errorf("racing Delete() error = %v", err)
+		}
+	}
+	_, err := srv.Create(ctx, &aigridv1.SubscriptionsCreateRequest{Object: gitSampleSubscription("team-a")})
+	assertConnectCode(t, err, connect.CodeAlreadyExists)
+	if writer.commits != 1 {
+		t.Fatalf("commits through srv = %d, want the conflicting one only", writer.commits)
+	}
+	assertGitDirFiles(t, writer, subscriptionsGitDir, subscriptionsKeepFile)
+}
+
 func assertGitDirFiles(t *testing.T, writer gitops.Writer, dir string, want ...string) {
 	t.Helper()
 	head, err := writer.Head(context.Background())

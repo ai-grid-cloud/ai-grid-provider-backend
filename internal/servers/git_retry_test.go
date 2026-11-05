@@ -285,8 +285,11 @@ func TestGitWritesDecideRefusalsAgainOnFreshHead(t *testing.T) {
 	writer.lagHere(t)
 	_, err = otherSubscriptions.Delete(ctx, &aigridv1.SubscriptionsDeleteRequest{Id: "team-a"})
 	must("other Delete team-a", err)
+	// The stale snapshot still has team-a, and the fresh head has its
+	// deleted record, so the name stays refused, now for that reason.
 	_, err = subscriptions.Create(ctx, &aigridv1.SubscriptionsCreateRequest{Object: gitSampleSubscription("team-a")})
-	must("Create of a subscription deleted meanwhile", err)
+	assertConnectCode(t, err, connect.CodeAlreadyExists)
+	assertConnectMessage(t, err, `A subscription named "team-a" existed before and was deleted. Its name can't be used again, because clusters removed from AI Grid can still hold a copy of the old one. Choose another name.`)
 	wantFreshHeads("Create of a subscription deleted meanwhile", 1)
 
 	writer.lagHere(t)

@@ -41,6 +41,12 @@ const (
 	subscriptionsKeepFile = "README"
 	subscriptionsKeepText = "Subscriptions the backend commits, one file each. Keep this file.\n"
 
+	// deletedSubscriptionsGitDir holds a file for every subscription the
+	// backend deleted, named by its id (deletedSubscriptionGitPath). Create
+	// refuses those ids. No Argo CD Application reads this directory.
+	deletedSubscriptionsGitDir = "catalog/deleted-subscriptions"
+	deletedSubscriptionText    = "This subscription was deleted. The backend refuses to create a subscription with this id again. Keep this file.\n"
+
 	// argoSyncOptionsAnnotation holds the Argo CD sync options of one
 	// object, comma-separated.
 	argoSyncOptionsAnnotation = "argocd.argoproj.io/sync-options"
@@ -56,6 +62,18 @@ const (
 
 func subscriptionGitPath(id string) string {
 	return path.Join(subscriptionsGitDir, id+".yaml")
+}
+
+// deletedSubscriptionGitPath is the file that records that subscription id
+// was deleted, so its name is never used again. MaaS revokes API keys by
+// subscription name (maas-controller handleDeletion), and a cluster removed
+// from the grid keeps its copy of every subscription (Delete=false). If a
+// new subscription took a deleted one's name, deleting the old copy on such
+// a cluster, by hand, by a MaaS uninstall, or by Argo CD pruning it when the
+// cluster joins again, would revoke the new subscription's keys on every
+// cluster.
+func deletedSubscriptionGitPath(id string) string {
+	return path.Join(deletedSubscriptionsGitDir, id)
 }
 
 // subscriptionDoc is a parsed subscription file.
@@ -352,10 +370,20 @@ func (s *SubscriptionsServer) gitCreateOn(ctx context.Context, head gitops.Snaps
 	} else if !errors.Is(err, gitops.ErrNotFound) {
 		return nil, subscriptionGitError("create", id, err)
 	}
+	// The console shows this message to provider admins as it is.
+	if _, err := head.Read(deletedSubscriptionGitPath(id)); err == nil {
+		return nil, connect.Errorf(connect.CodeAlreadyExists,
+			"A subscription named %q existed before and was deleted. Its name can't be used again, because clusters removed from AI Grid can still hold a copy of the old one. Choose another name.", id)
+	} else if !errors.Is(err, gitops.ErrNotFound) {
+		return nil, subscriptionGitError("create", id, err)
+	}
 	read, err := s.gitEnsureModelsExist(head, "create", object)
 	if err != nil {
 		return nil, err
 	}
+	// A delete of the same id committed since head makes this conflict, and
+	// the rerun refuses it.
+	read = append(read, deletedSubscriptionGitPath(id))
 	doc, err := s.gitCommit(ctx, head.Revision(), "create", object, 1, "", read)
 	if err != nil {
 		return nil, err
@@ -440,6 +468,9 @@ func (s *SubscriptionsServer) gitUpdateOn(ctx context.Context, head gitops.Snaps
 // commit is made on the revision read, so a concurrent write to the file
 // makes it conflict, and Delete's rerun checks the version again.
 //
+// The commit also writes deletedSubscriptionGitPath(id), so Create never
+// uses the id again.
+//
 // When the file is the directory's last, the commit also writes
 // subscriptionsKeepFile, so the directory stays and Argo CD prunes the
 // subscription. Git drops an empty directory, and a catalog ApplicationSet
@@ -470,6 +501,7 @@ func (s *SubscriptionsServer) gitDeleteOn(ctx context.Context, head gitops.Snaps
 		Delete:  []string{subscriptionGitPath(id)},
 		Message: "subscriptions: delete " + id,
 	}
+	change.Put = map[string][]byte{deletedSubscriptionGitPath(id): []byte(deletedSubscriptionText)}
 	if !slices.Contains(files, subscriptionsKeepFile) {
 		// Without the keep file the directory's other files decide whether
 		// this delete writes it, so the commit reads the directory: a
@@ -478,7 +510,7 @@ func (s *SubscriptionsServer) gitDeleteOn(ctx context.Context, head gitops.Snaps
 		// directory stays whatever else changes.
 		change.Read = []string{subscriptionsGitDir}
 		if len(files) == 1 {
-			change.Put = map[string][]byte{path.Join(subscriptionsGitDir, subscriptionsKeepFile): []byte(subscriptionsKeepText)}
+			change.Put[path.Join(subscriptionsGitDir, subscriptionsKeepFile)] = []byte(subscriptionsKeepText)
 		}
 	}
 	if _, err = s.writer.Commit(ctx, head.Revision(), change); err != nil {

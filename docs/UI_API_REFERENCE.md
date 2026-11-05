@@ -949,6 +949,15 @@ BFF maps that to string ETags.
 
 Subscription ids must leave room for the `-policy` suffix (max 56 chars).
 
+**An id is used once.** Delete records the id in
+`catalog/deleted-subscriptions/<id>`, and Create of an id deleted before is
+`AlreadyExists`: "A subscription named "<id>" existed before and was deleted.
+Its name can't be used again, because clusters removed from AI Grid can still
+hold a copy of the old one. Choose another name." MaaS revokes API keys by
+subscription name, and a cluster removed from the grid keeps its copy of every
+subscription, so reusing a name would let a later cleanup of that copy revoke
+the new subscription's keys everywhere (README "Git catalog").
+
 **List `filter` / `order`:** applied as filter → order → offset/limit.
 `total` is the match count after filter.
 
