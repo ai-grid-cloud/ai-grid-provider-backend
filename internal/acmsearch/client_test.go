@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -305,8 +306,32 @@ func TestResourcesQueryAndAnswer(t *testing.T) {
 		{Cluster: "site-a", Namespace: "models-as-a-service", Name: "e2e-sub"},
 		{Cluster: "site-a", Namespace: "models-as-a-service", Name: "tenant-42c3e46f-users"},
 	}
-	if len(items) != len(want) || items[0] != want[0] || items[1] != want[1] {
+	if !reflect.DeepEqual(items, want) {
 		t.Fatalf("items = %+v, want %+v (sorted; an item without a cluster or a string name is skipped)", items, want)
+	}
+}
+
+// Resources keeps only the labels the caller names, from Search's "k=v; k=v"
+// form; a resource without them gets an empty map.
+func TestResourcesLabels(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":{"searchResult":[{"items":[
+			{"cluster":"site-a","name":"kept","namespace":"models-as-a-service","label":"ai-grid/kept-on-removal=true; team=a"},
+			{"cluster":"site-a","name":"plain","namespace":"models-as-a-service"}
+		]}]}}`))
+	}))
+	defer srv.Close()
+	items, err := New(srv.URL, srv.Client()).Resources(context.Background(), "MaaSSubscription", "maas.opendatahub.io", "site-a", "ai-grid/kept-on-removal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Resource{
+		{Cluster: "site-a", Namespace: "models-as-a-service", Name: "kept", Labels: map[string]string{"ai-grid/kept-on-removal": "true"}},
+		{Cluster: "site-a", Namespace: "models-as-a-service", Name: "plain", Labels: map[string]string{}},
+	}
+	if !reflect.DeepEqual(items, want) {
+		t.Fatalf("items = %+v, want %+v", items, want)
 	}
 }
 

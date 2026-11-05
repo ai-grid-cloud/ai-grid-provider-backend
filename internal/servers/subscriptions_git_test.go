@@ -126,6 +126,317 @@ func TestSubscriptionsGitDeleteWithoutVersion(t *testing.T) {
 	assertConnectCode(t, err, connect.CodeNotFound)
 }
 
+// Every MaaSSubscription the backend writes carries the Argo CD sync option
+// Delete=false, so a cluster leaving the ingress Placement keeps its copy and
+// MaaS doesn't revoke the subscription's keys on every cluster. Its
+// MaaSAuthPolicy carries none, so that cluster still loses access. Reads
+// don't return the annotation, so a client can send back what it read.
+func TestSubscriptionsGitArgoDeleteFalse(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	writer := gitops.NewMemoryWriter(gitModelSeed("sim-model"))
+	srv := mustGitSubscriptionsServer(t, writer)
+	created, err := srv.Create(ctx, &aigridv1.SubscriptionsCreateRequest{Object: gitSampleSubscription("team-a")})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	assertArgoSyncOptions(t, writer, "team-a", "Delete=false")
+	if _, ok := created.GetObject().GetMetadata().GetAnnotations()[argoSyncOptionsAnnotation]; ok {
+		t.Fatal("Create returned the sync options annotation")
+	}
+	if _, ok := created.GetObject().GetMetadata().GetLabels()[keptOnRemovalLabel]; ok {
+		t.Fatal("Create returned the kept-on-removal label")
+	}
+
+	// An update keeps it, whether or not it rewrites the metadata.
+	update := gitSampleSubscription("team-a")
+	update.Spec.Priority = 20
+	if _, err := srv.Update(ctx, &aigridv1.SubscriptionsUpdateRequest{Object: update, UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"spec"}}}); err != nil {
+		t.Fatalf("Update(spec) error = %v", err)
+	}
+	assertArgoSyncOptions(t, writer, "team-a", "Delete=false")
+	got, err := srv.Get(ctx, &aigridv1.SubscriptionsGetRequest{Id: "team-a"})
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if _, ok := got.GetObject().GetMetadata().GetAnnotations()[argoSyncOptionsAnnotation]; ok {
+		t.Fatal("Get returned the sync options annotation")
+	}
+	if _, ok := got.GetObject().GetMetadata().GetLabels()[keptOnRemovalLabel]; ok {
+		t.Fatal("Get returned the kept-on-removal label")
+	}
+	if _, err := srv.Update(ctx, &aigridv1.SubscriptionsUpdateRequest{Object: got.GetObject(), UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"metadata"}}}); err != nil {
+		t.Fatalf("Update(read metadata back) error = %v", err)
+	}
+	assertArgoSyncOptions(t, writer, "team-a", "Delete=false")
+}
+
+// An update keeps the other sync options a hand edit gave the file, once
+// each, and puts Delete=false in place of any other Delete option, which
+// Argo CD would read first.
+func TestSubscriptionsGitArgoSyncOptionsMerged(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	writer := gitops.NewMemoryWriter(gitModelSeed("sim-model"))
+	srv := mustGitSubscriptionsServer(t, writer)
+	if _, err := srv.Create(ctx, &aigridv1.SubscriptionsCreateRequest{Object: gitSampleSubscription("team-a")}); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	p := subscriptionGitPath("team-a")
+	docs := readGitYAMLDocs(t, writer, p)
+	for _, doc := range docs {
+		if doc.GetKind() == "MaaSSubscription" {
+			annotations := doc.GetAnnotations()
+			annotations[argoSyncOptionsAnnotation] = "ServerSideApply=true, Delete=confirm,,ServerSideApply=true"
+			doc.SetAnnotations(annotations)
+		}
+	}
+	data, err := marshalYAMLDocs(docs...)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	head, err := writer.Head(ctx)
+	if err != nil {
+		t.Fatalf("Head() error = %v", err)
+	}
+	if _, err := writer.Commit(ctx, head.Revision(), gitops.Change{Put: map[string][]byte{p: data}, Message: "hand edit"}); err != nil {
+		t.Fatalf("Commit(hand edit) error = %v", err)
+	}
+
+	update := gitSampleSubscription("team-a")
+	update.Spec.Priority = 20
+	if _, err := srv.Update(ctx, &aigridv1.SubscriptionsUpdateRequest{Object: update, UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"spec"}}}); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+	assertArgoSyncOptions(t, writer, "team-a", "ServerSideApply=true,Delete=false")
+}
+
+func TestWithArgoDeleteFalse(t *testing.T) {
+	t.Parallel()
+	for in, want := range map[string]string{
+		"":                                  "Delete=false",
+		"Delete=false":                      "Delete=false",
+		"Delete=true":                       "Delete=false",
+		"Delete=confirm, Prune=false":       "Prune=false,Delete=false",
+		" Validate=false ,,Validate=false ": "Validate=false,Delete=false",
+		"Delete=false,Replace=true":         "Replace=true,Delete=false",
+	} {
+		if got := withArgoDeleteFalse(in); got != want {
+			t.Errorf("withArgoDeleteFalse(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// assertArgoSyncOptions checks the sync options of subscription id's file:
+// want on its MaaSSubscription, and none on its MaaSAuthPolicy.
+func assertArgoSyncOptions(t *testing.T, writer gitops.Writer, id, want string) {
+	t.Helper()
+	sub, policy := readGitSubscriptionFile(t, writer, id)
+	if got := sub.GetAnnotations()[argoSyncOptionsAnnotation]; got != want {
+		t.Fatalf("file MaaSSubscription %s = %q, want %q", argoSyncOptionsAnnotation, got, want)
+	}
+	if got, ok := policy.GetAnnotations()[argoSyncOptionsAnnotation]; ok {
+		t.Fatalf("file MaaSAuthPolicy %s = %q, want none: a cluster leaving the Placement must delete it", argoSyncOptionsAnnotation, got)
+	}
+	// The label the cluster role checks read through ACM Search.
+	if got := sub.GetLabels()[keptOnRemovalLabel]; got != "true" {
+		t.Fatalf("file MaaSSubscription label %s = %q, want true", keptOnRemovalLabel, got)
+	}
+	if got, ok := policy.GetLabels()[keptOnRemovalLabel]; ok {
+		t.Fatalf("file MaaSAuthPolicy label %s = %q, want none", keptOnRemovalLabel, got)
+	}
+}
+
+// Deleting the last subscription keeps catalog/subscriptions in Git with a
+// README, so Argo CD prunes the MaaSSubscription (Delete=false) rather than
+// a catalog ApplicationSet deleting the Application and leaving it. A delete
+// that leaves another file writes nothing more, and an existing README is
+// left as it is.
+func TestSubscriptionsGitDeleteKeepsDirectory(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	keep := path.Join(subscriptionsGitDir, subscriptionsKeepFile)
+
+	writer := gitops.NewMemoryWriter(gitModelSeed("sim-model"))
+	srv := mustGitSubscriptionsServer(t, writer)
+	for _, id := range []string{"team-a", "team-b"} {
+		if _, err := srv.Create(ctx, &aigridv1.SubscriptionsCreateRequest{Object: gitSampleSubscription(id)}); err != nil {
+			t.Fatalf("Create(%s) error = %v", id, err)
+		}
+	}
+	if _, err := srv.Delete(ctx, &aigridv1.SubscriptionsDeleteRequest{Id: "team-a"}); err != nil {
+		t.Fatalf("Delete(team-a) error = %v", err)
+	}
+	assertGitDirFiles(t, writer, subscriptionsGitDir, "team-b.yaml")
+	if _, err := srv.Delete(ctx, &aigridv1.SubscriptionsDeleteRequest{Id: "team-b"}); err != nil {
+		t.Fatalf("Delete(team-b) error = %v", err)
+	}
+	assertGitDirFiles(t, writer, subscriptionsGitDir, subscriptionsKeepFile)
+	head, err := writer.Head(ctx)
+	if err != nil {
+		t.Fatalf("Head() error = %v", err)
+	}
+	if data, err := head.Read(keep); err != nil || string(data) != subscriptionsKeepText {
+		t.Fatalf("Read(%s) = %q, %v", keep, data, err)
+	}
+	list, err := srv.List(ctx, &aigridv1.SubscriptionsListRequest{})
+	if err != nil || list.GetTotal() != 0 {
+		t.Fatalf("List() = %v, %v, want none", list, err)
+	}
+
+	seed := gitModelSeed("sim-model")
+	seed[keep] = []byte("custom")
+	seeded := gitops.NewMemoryWriter(seed)
+	srv = mustGitSubscriptionsServer(t, seeded)
+	if _, err := srv.Create(ctx, &aigridv1.SubscriptionsCreateRequest{Object: gitSampleSubscription("team-a")}); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, err := srv.Delete(ctx, &aigridv1.SubscriptionsDeleteRequest{Id: "team-a"}); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	head, err = seeded.Head(ctx)
+	if err != nil {
+		t.Fatalf("Head() error = %v", err)
+	}
+	if data, err := head.Read(keep); err != nil || string(data) != "custom" {
+		t.Fatalf("Read(%s) = %q, %v, want the seeded file left as it was", keep, data, err)
+	}
+}
+
+// Two deletes at once that each leave the other's file: the second to commit
+// conflicts on the directory, and its rerun writes the README. Once the
+// README is there, neither reads the directory, so neither conflicts.
+func TestSubscriptionsGitConcurrentDeletesKeepDirectory(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	writer := &racingWriter{MemoryWriter: gitops.NewMemoryWriter(gitModelSeed("sim-model"))}
+	srv := mustGitSubscriptionsServer(t, writer)
+	other := mustGitSubscriptionsServer(t, writer.MemoryWriter)
+	for _, id := range []string{"team-a", "team-b"} {
+		if _, err := other.Create(ctx, &aigridv1.SubscriptionsCreateRequest{Object: gitSampleSubscription(id)}); err != nil {
+			t.Fatalf("Create(%s) error = %v", id, err)
+		}
+	}
+	writer.race = func() {
+		if _, err := other.Delete(ctx, &aigridv1.SubscriptionsDeleteRequest{Id: "team-b"}); err != nil {
+			t.Errorf("racing Delete() error = %v", err)
+		}
+	}
+	if _, err := srv.Delete(ctx, &aigridv1.SubscriptionsDeleteRequest{Id: "team-a"}); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	if writer.commits != 2 {
+		t.Fatalf("commits through srv = %d, want a conflict and a rerun", writer.commits)
+	}
+	assertGitDirFiles(t, writer, subscriptionsGitDir, subscriptionsKeepFile)
+
+	// With the keep file in place the directory stays, so the deletes don't
+	// read it, and neither conflicts with the other.
+	seed := gitModelSeed("sim-model")
+	seed[path.Join(subscriptionsGitDir, subscriptionsKeepFile)] = []byte(subscriptionsKeepText)
+	writer = &racingWriter{MemoryWriter: gitops.NewMemoryWriter(seed)}
+	srv = mustGitSubscriptionsServer(t, writer)
+	other = mustGitSubscriptionsServer(t, writer.MemoryWriter)
+	for _, id := range []string{"team-a", "team-b"} {
+		if _, err := other.Create(ctx, &aigridv1.SubscriptionsCreateRequest{Object: gitSampleSubscription(id)}); err != nil {
+			t.Fatalf("Create(%s) error = %v", id, err)
+		}
+	}
+	writer.race = func() {
+		if _, err := other.Delete(ctx, &aigridv1.SubscriptionsDeleteRequest{Id: "team-b"}); err != nil {
+			t.Errorf("racing Delete() error = %v", err)
+		}
+	}
+	if _, err := srv.Delete(ctx, &aigridv1.SubscriptionsDeleteRequest{Id: "team-a"}); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	if writer.commits != 1 {
+		t.Fatalf("commits through srv = %d, want one, with no conflict", writer.commits)
+	}
+	assertGitDirFiles(t, writer, subscriptionsGitDir, subscriptionsKeepFile)
+}
+
+// A deleted subscription's name is never used again: Delete records it in
+// catalog/deleted-subscriptions, which no list reads, and Create refuses it.
+// MaaS revokes keys by subscription name, and a cluster removed from the grid
+// keeps its copy of the old subscription, so deleting that copy later would
+// revoke a new subscription of the same name everywhere.
+func TestSubscriptionsGitDeletedNameNotReused(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	writer := gitops.NewMemoryWriter(gitModelSeed("sim-model"))
+	srv := mustGitSubscriptionsServer(t, writer)
+	for _, id := range []string{"team-a", "team-b"} {
+		if _, err := srv.Create(ctx, &aigridv1.SubscriptionsCreateRequest{Object: gitSampleSubscription(id)}); err != nil {
+			t.Fatalf("Create(%s) error = %v", id, err)
+		}
+	}
+	if _, err := srv.Delete(ctx, &aigridv1.SubscriptionsDeleteRequest{Id: "team-a"}); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	assertGitDirFiles(t, writer, deletedSubscriptionsGitDir, "team-a")
+	assertGitDirFiles(t, writer, subscriptionsGitDir, "team-b.yaml")
+	head, err := writer.Head(ctx)
+	if err != nil {
+		t.Fatalf("Head() error = %v", err)
+	}
+	if data, err := head.Read(deletedSubscriptionGitPath("team-a")); err != nil || string(data) != deletedSubscriptionText {
+		t.Fatalf("Read(%s) = %q, %v", deletedSubscriptionGitPath("team-a"), data, err)
+	}
+
+	_, err = srv.Create(ctx, &aigridv1.SubscriptionsCreateRequest{Object: gitSampleSubscription("team-a")})
+	assertConnectCode(t, err, connect.CodeAlreadyExists)
+	assertConnectMessage(t, err, `A subscription named "team-a" existed before and was deleted. Its name can't be used again, because clusters removed from AI Grid can still hold a copy of the old one. Choose another name.`)
+	assertGitDirFiles(t, writer, subscriptionsGitDir, "team-b.yaml")
+
+	if _, err := srv.Create(ctx, &aigridv1.SubscriptionsCreateRequest{Object: gitSampleSubscription("team-c")}); err != nil {
+		t.Fatalf("Create(team-c) error = %v", err)
+	}
+	list, err := srv.List(ctx, &aigridv1.SubscriptionsListRequest{})
+	if err != nil || list.GetTotal() != 2 {
+		t.Fatalf("List() = %v, %v, want team-b and team-c", list, err)
+	}
+}
+
+// A Create decided before another writer created and deleted the same id
+// conflicts on the deleted record, and its rerun refuses the name.
+func TestSubscriptionsGitCreateRacingADelete(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	writer := &racingWriter{MemoryWriter: gitops.NewMemoryWriter(gitModelSeed("sim-model"))}
+	srv := mustGitSubscriptionsServer(t, writer)
+	other := mustGitSubscriptionsServer(t, writer.MemoryWriter)
+	writer.race = func() {
+		if _, err := other.Create(ctx, &aigridv1.SubscriptionsCreateRequest{Object: gitSampleSubscription("team-a")}); err != nil {
+			t.Errorf("racing Create() error = %v", err)
+		}
+		if _, err := other.Delete(ctx, &aigridv1.SubscriptionsDeleteRequest{Id: "team-a"}); err != nil {
+			t.Errorf("racing Delete() error = %v", err)
+		}
+	}
+	_, err := srv.Create(ctx, &aigridv1.SubscriptionsCreateRequest{Object: gitSampleSubscription("team-a")})
+	assertConnectCode(t, err, connect.CodeAlreadyExists)
+	if writer.commits != 1 {
+		t.Fatalf("commits through srv = %d, want the conflicting one only", writer.commits)
+	}
+	assertGitDirFiles(t, writer, subscriptionsGitDir, subscriptionsKeepFile)
+}
+
+func assertGitDirFiles(t *testing.T, writer gitops.Writer, dir string, want ...string) {
+	t.Helper()
+	head, err := writer.Head(context.Background())
+	if err != nil {
+		t.Fatalf("Head() error = %v", err)
+	}
+	got, err := head.List(dir)
+	if err != nil {
+		t.Fatalf("List(%s) error = %v", dir, err)
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("files in %s = %v, want %v", dir, got, want)
+	}
+}
+
 func TestSubscriptionsGitUpdateMasks(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

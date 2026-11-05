@@ -331,15 +331,20 @@ Two consequences the rules below guard against:
   cluster loses their API keys in a different way depending on the change:
   - **Leaving the grid**, or losing the role while staying in it, takes the
     cluster out of the `ai-grid-ingress` Placement. Argo CD deletes its
-    copies of the subscriptions (the resources finalizer on those
-    Applications, without `Delete=false`), and maas-controller revokes the
+    copies of the subscriptions that don't carry the sync option
+    `Delete=false` (the resources finalizer on those Applications), and
+    maas-controller revokes the
     API keys of each deleted `MaaSSubscription` in the maas-db every cluster
     shares (opendatahub-io/models-as-a-service,
     `maas-controller/pkg/controller/maas/maassubscription_controller.go`,
     `handleDeletion`). So those keys stop working on every cluster, not only
     on the one that changed. MaaS itself stays installed: the `rhoai`
     ApplicationSet preserves what it installed
-    (`apps/rhoai/hub/01-applicationset.yaml`).
+    (`apps/rhoai/hub/01-applicationset.yaml`). A subscription with
+    `Delete=false` stays on the cluster, unmanaged, and keeps its keys; the
+    backend writes it on every catalog subscription, with the label
+    `ai-grid/kept-on-removal: "true"` that rule 2 reads (README "Git
+    catalog").
   - **A change to the `inference` role** does the same, and also turns MaaS
     off on the cluster: that role's profile sets `modelsAsAService` to
     `Removed` (opendatahub-io/odh-gitops, `rhai-on-openshift-chart` README).
@@ -351,6 +356,7 @@ Two consequences the rules below guard against:
     `maas-api/internal/api_keys/store_postgres.go`). The grid has one
     AITenant, `models-as-a-service`, so that can be every API key in AI
     Grid. This is read from those sources, not tried on a cluster.
+    `Delete=false` doesn't help here.
 - **Placed models.** A role change without inference prunes the models
   placed on the cluster. Removing the cluster from the grid leaves them
   running but unmanaged (`preserveResourcesOnDeletion` on the models
@@ -365,7 +371,7 @@ after the version, and answers the first rule that refuses:
 | # | Rule | Code |
 | --- | --- | --- |
 | 1 | A role the body sets or changes must be `ingress`, `inference` or `combined`. No role is allowed. A role the cluster already has and the body sends back unchanged isn't judged again. | `InvalidArgument` (`3`) |
-| 2 | A grid member that serves ingress stops serving it (its role changes to one without ingress, or it is removed from the grid) while it serves ingress for any subscription: a `MaaSSubscription` ACM Search indexes on the cluster (kind `MaaSSubscription`, apigroup `maas.opendatahub.io`, cluster `<name>`), whoever delivered it, or, when Search has none there, a subscription in the Git catalog (`catalog/subscriptions/<id>.yaml`). The message counts the subscriptions of whichever source found them, names up to five, says what the change would do (above), and says where to delete them: in the console for those with a catalog file of their name, in the GitOps repository that delivers them for the others (an organization's own, which `Subscriptions/List` and `Delete` don't see). | `FailedPrecondition` (`9`) |
+| 2 | A grid member that serves ingress stops serving it (its role changes to one without ingress, or it is removed from the grid) while it serves ingress for any subscription: a `MaaSSubscription` ACM Search indexes on the cluster (kind `MaaSSubscription`, apigroup `maas.opendatahub.io`, cluster `<name>`), whoever delivered it, or, when Search has none there, a subscription in the Git catalog (`catalog/subscriptions/<id>.yaml`). A removal from the grid while another grid member serves ingress keeps the subscriptions that carry `Delete=false`, and those don't count: each whose copy on the cluster has the label `ai-grid/kept-on-removal: "true"` in Search. The catalog fallback keeps none, because Argo CD reads `Delete=false` from the copy on the cluster, not from Git. If the other grid members can't be listed, a removal answers that list's error. A role change, or the role removed, counts every subscription. The message counts the subscriptions of whichever source found them, names up to five, says what the change would do (above), and says where to delete them: in the console for those with a catalog file of their name, in the GitOps repository that delivers them for the others (an organization's own, which `Subscriptions/List` and `Delete` don't see). | `FailedPrecondition` (`9`) |
 | 3 | A grid member that serves ingress stops serving it while no other grid member serves ingress, and the grid keeps a member: the cluster itself on a role change, any other cluster on a removal. Users reach models through ingress clusters; give another cluster role `ingress` or `combined` first. The grid's last member may be removed: that retires the grid and strands no one. | `FailedPrecondition` (`9`) |
 | 4 | A grid member stops serving inference (its role changes from `inference` or `combined` to one without inference), or is removed from the grid whatever its role, while the Git catalog places models on it (`catalog/clusters/<name>/kustomization.yaml`). The message counts the models and names up to five; move them to other clusters first. | `FailedPrecondition` (`9`) |
 
@@ -379,8 +385,17 @@ Notes:
 - A cluster joining the grid, a role change of a cluster outside the grid,
   and an update that keeps a member in the grid with its role (other
   labels, annotations, `hub_accepts_client`) aren't checked.
-- So retiring an ingress cluster, by a role change or a removal, needs
-  every subscription on it deleted first, an organization's included. That
+- So a removal from the grid needs another cluster that serves ingress, and
+  every subscription on the cluster carrying `Delete=false` and the label
+  on its copy there. A catalog written before the backend added them needs
+  `hack/add-subscription-delete-false.sh` and a sync (README "Git
+  catalog"); an organization's own subscription needs both added in the
+  GitOps repository that delivers it. Search shows the label only once Argo
+  CD has synced the copy, and the collector has reported it, so until then
+  the removal is refused. After a removal the cluster keeps those copies:
+  see README "Git catalog" for cleaning them up.
+- Retiring an ingress cluster by a role change needs every subscription on
+  it deleted first, an organization's included. That
   revokes their keys too, but as a step the admin chooses, not as a side
   effect of a cluster change. An organization's subscription isn't in the
   catalog, so the console can neither list nor delete it: it is removed, or
@@ -396,7 +411,8 @@ Notes:
   subscription delivered a moment ago may not show yet; the catalog fallback
   covers the catalog's own. A Search query that fails (unreachable, an HTTP
   error, GraphQL errors, a token it refuses) answers `Unavailable` (`14`).
-  A backend with `--search-api-url=off` (Kind) checks the catalog only.
+  A backend with `--search-api-url=off` (Kind) checks the catalog only, so
+  it refuses a removal while the catalog has any subscription.
 - The catalog is read once per PATCH, on the remote's head, not on the
   backend's read cache (`AI_GRID_GIT_READ_MAX_AGE`), so a model placed or a
   subscription created by another writer a moment ago counts. A backend
@@ -948,6 +964,15 @@ Display name / description for the subscription itself stay in
 BFF maps that to string ETags.
 
 Subscription ids must leave room for the `-policy` suffix (max 56 chars).
+
+**An id is used once.** Delete records the id in
+`catalog/deleted-subscriptions/<id>`, and Create of an id deleted before is
+`AlreadyExists`: "A subscription named "<id>" existed before and was deleted.
+Its name can't be used again, because clusters removed from AI Grid can still
+hold a copy of the old one. Choose another name." MaaS revokes API keys by
+subscription name, and a cluster removed from the grid keeps its copy of every
+subscription, so reusing a name would let a later cleanup of that copy revoke
+the new subscription's keys everywhere (README "Git catalog").
 
 **List `filter` / `order`:** applied as filter → order → offset/limit.
 `total` is the match count after filter.

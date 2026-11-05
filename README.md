@@ -81,9 +81,14 @@ derives, so no client has to:
   role is allowed. Then, for a member whose role changes or that leaves the
   grid, these are `FailedPrecondition`, the first that applies answering:
   it stops serving ingress (`ingress` or `combined` to a role without
-  ingress, or leaving) while the Git catalog has any subscription, because
-  Argo CD then deletes its copies of every subscription and maas-controller
-  revokes their API keys in the shared maas-db, on all clusters; it stops
+  ingress, or leaving) while it serves any subscription (ACM Search, else the
+  Git catalog), because Argo CD then deletes its copies and maas-controller
+  revokes their API keys in the shared maas-db, on all clusters, or the
+  `inference` role turns MaaS off there; a removal from the grid while
+  another member serves ingress doesn't count the subscriptions that carry
+  `Delete=false` (the `ai-grid/kept-on-removal: "true"` label on the
+  cluster's copy, as ACM Search shows it; without Search the catalog's
+  always count), because the cluster keeps those; it stops
   serving ingress while it is the grid's last ingress cluster and the grid
   keeps a member; it stops serving inference (`inference` or `combined` to
   a role without inference), or leaves whatever its role, while the catalog
@@ -284,6 +289,72 @@ For subscriptions:
   repeats are dropped.
 - The policy lives in the subscription's file, so Argo CD prunes both
   together; it has no ownerReference.
+- The `MaaSSubscription` carries the Argo CD sync option `Delete=false`
+  (annotation `argocd.argoproj.io/sync-options`); the policy doesn't. MaaS
+  revokes every API key of a subscription whose `MaaSSubscription` is deleted
+  on any cluster, in the key database the clusters share. With `Delete=false`,
+  a cluster removed from AI Grid, whose catalog Application is then deleted,
+  keeps its `MaaSSubscription`, so the keys stay valid on the other clusters,
+  and loses the policy, so it refuses the subscription's users.
+  `Delete=false` applies only when an Application is deleted, not to
+  pruning: deleting the file still prunes both objects from every cluster,
+  and MaaS revokes the keys. An update keeps any other sync option the file
+  has and replaces any other `Delete` option. Reads don't return the
+  annotation.
+- A catalog written before the backend added the option gets it on each
+  subscription's next update. To add it to every subscription at once, run
+  `hack/add-subscription-delete-false.sh <catalog checkout>`, then review,
+  commit and push. The script changes only the `MaaSSubscription` documents,
+  and running it again changes nothing. Argo CD reads `Delete=false` from the
+  object on the cluster, not from Git, when it deletes an Application: until
+  a cluster's `acm-models-catalog-subscriptions-<cluster>` Application has
+  synced the change, removing that cluster from the grid still revokes the
+  keys. So after pushing, wait until every ingress cluster's Application is
+  `Synced` at that commit before removing any cluster. The script adds the
+  label too, and Clusters/Update refuses the removal until Search shows the
+  label on the cluster's copy of every subscription.
+- `Delete=false` covers a cluster leaving the grid, not a role change. A
+  change to the `inference` role turns MaaS off on the cluster, which deletes
+  its `AITenant`, and deleting an `AITenant` revokes every API key of that
+  tenant in the shared database; the grid has one tenant, so that can be every
+  key in AI Grid. Clusters/Update keeps refusing a role change away from
+  ingress while the cluster serves any subscription, and allows a removal
+  from the grid while another cluster serves ingress only when ACM Search
+  shows every subscription on the cluster kept. A backend without Search
+  (`--search-api-url=off`) refuses the removal while the catalog has any
+  subscription, because a file in Git says nothing about the copy on the
+  cluster
+  ([Cluster membership](#cluster-membership-state-and-location)).
+- The `MaaSSubscription` also carries the label
+  `ai-grid/kept-on-removal: "true"`. ACM Search indexes a custom resource's
+  labels but not its annotations, so Clusters/Update reads this label on the
+  cluster's live copy to know that copy has `Delete=false`. A subscription
+  delivered from elsewhere, such as an organization's own in the GitOps
+  repository, needs both the annotation and the label to count as kept.
+  Reads don't return the label.
+- A cluster removed from the grid keeps an orphaned copy of each
+  `MaaSSubscription` it had. The copies stay there until MaaS has a
+  supported way to delete a subscription without revoking its keys
+  ([RHAI-20306](https://redhat.atlassian.net/browse/RHAI-20306)). Don't
+  delete one by hand, and don't uninstall MaaS on that cluster while
+  maas-controller runs: each copy carries the finalizer
+  `maas.opendatahub.io/subscription-cleanup`, and its cleanup revokes that
+  subscription's keys, by name, on every cluster. Removing the finalizer
+  first doesn't help, because maas-controller adds it back whenever it
+  reconciles a subscription that isn't being deleted.
+- A cluster that joins the grid again gets the catalog's Application back.
+  Argo CD adopts an orphan whose file still exists, and prunes one whose file
+  is gone, which revokes by name again. That revokes nothing new, because the
+  backend never gives a deleted subscription's name to another one (next
+  item).
+- A deleted subscription's name is never used again. MaaS revokes keys by
+  subscription name, so if a new subscription took the name, deleting an old
+  orphan anywhere would revoke the new one's keys on every cluster. Delete
+  writes `catalog/deleted-subscriptions/<id>` in the same commit, and Create
+  refuses an id that has one with `AlreadyExists`. No Argo CD Application
+  reads that directory. A subscription deleted before the backend kept these
+  records, or whose file was removed from Git by hand, has none, so its name
+  can be taken again; commit that file by hand to stop it.
 - A model ref without a namespace gets the subscription's namespace
   (`models-as-a-service` by default). A ref in that namespace must name a
   model in the repository, or Create and Update answer `FailedPrecondition`;
@@ -313,8 +384,13 @@ For subscriptions:
   reason `SavedToGit`, so a client doesn't take the models as missing.
 - Keep a file that isn't `*.yaml`, such as a `README`, in
   `catalog/subscriptions/`. Git drops an empty directory, so without it
-  deleting the last subscription removes the path, and Argo CD reports an error
-  instead of pruning. List reads only `*.yaml` files.
+  deleting the last subscription removes the path, and Argo CD doesn't prune:
+  an Application with a fixed path reports an error, and an ApplicationSet
+  whose Git generator lists the directory deletes the Application instead,
+  which keeps the `MaaSSubscription` (`Delete=false`) and leaves its keys
+  valid. When a delete would leave the directory empty, the backend writes
+  `catalog/subscriptions/README` in the same commit; it never changes an
+  existing one. List reads only `*.yaml` files.
 
 For models:
 
