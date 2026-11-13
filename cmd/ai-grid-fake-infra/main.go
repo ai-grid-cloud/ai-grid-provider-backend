@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -32,6 +33,7 @@ import (
 	"github.com/osac-project/ai-grid-provider-backend/internal/fakeinfra/draft"
 	"github.com/osac-project/ai-grid-provider-backend/internal/fakeinfra/hub"
 	"github.com/osac-project/ai-grid-provider-backend/internal/fakeinfra/keycloak"
+	"github.com/osac-project/ai-grid-provider-backend/internal/gitops"
 )
 
 func main() {
@@ -46,6 +48,8 @@ func main() {
 	realm := flag.String("keycloak-realm", "ai-grid", "realm with Organizations (the backend's KEYCLOAK_REALM)")
 	username := flag.String("keycloak-admin-username", "admin", "Keycloak admin user name the password grant accepts (KEYCLOAK_ADMIN_USERNAME)")
 	password := flag.String("keycloak-admin-password", "admin", "Keycloak admin password the password grant accepts (KEYCLOAK_ADMIN_PASSWORD); local fake only")
+	catalogBranch := flag.String("catalog-git-branch", "main", "branch of --catalog-git-url (the backend's AI_GRID_GIT_BRANCH)")
+	catalogURL := flag.String("catalog-git-url", "", "the catalog the backend commits to (its AI_GRID_GIT_URL): its subscription ids make the fake Applications report generated names too; empty reports the fixtures' names only")
 	logLevel := flag.String("log-level", "info", "log level: debug, info, warn or error")
 	flag.Parse()
 
@@ -58,7 +62,7 @@ func main() {
 
 	if err := run(logger, config{
 		fixtures: *fixtures, hubAddress: *hubAddress, keycloakAddress: *keycloakAddress, kubeconfigOut: *kubeconfigOut, hubCAOut: *hubCAOut,
-		draftAddress: *draftAddress, draftFixtures: *draftFixtures,
+		draftAddress: *draftAddress, draftFixtures: *draftFixtures, catalogURL: *catalogURL, catalogBranch: *catalogBranch,
 		keycloak: keycloak.Config{AdminRealm: *adminRealm, Realm: *realm, Username: *username, Password: *password},
 	}); err != nil {
 		logger.Error("ai-grid-fake-infra failed", slog.Any("error", err))
@@ -83,6 +87,8 @@ type config struct {
 	hubCAOut        string
 	draftAddress    string
 	draftFixtures   string
+	catalogURL      string
+	catalogBranch   string
 	keycloak        keycloak.Config
 }
 
@@ -91,7 +97,11 @@ func run(logger *slog.Logger, cfg config) error {
 	if err != nil {
 		return fmt.Errorf("load hub fixtures: %w", err)
 	}
-	fakeHub, err := hub.New(hubFixtures, hub.WithLogger(logger.With("component", "hub")))
+	opts := []hub.Option{hub.WithLogger(logger.With("component", "hub"))}
+	if cfg.catalogURL != "" {
+		opts = append(opts, hub.WithSubscriptionIDs(catalogSubscriptionIDs(cfg.catalogURL, cfg.catalogBranch)))
+	}
+	fakeHub, err := hub.New(hubFixtures, opts...)
 	if err != nil {
 		return fmt.Errorf("build fake hub: %w", err)
 	}
@@ -296,4 +306,49 @@ func logRequests(logger *slog.Logger, component string, next http.Handler) http.
 			slog.Duration("duration", time.Since(start)),
 		)
 	})
+}
+
+// catalogSubscriptionsDir is where the backend writes subscriptions
+// (internal/servers, subscriptionsGitDir).
+const catalogSubscriptionsDir = "catalog/subscriptions"
+
+// catalogSubscriptionIDs lists the subscription ids in branch of the catalog
+// at url, fetching it on each call (the fake hub's Applications follow every
+// commit). It opens the catalog on first use and again after a failure, so a
+// catalog it can't read leaves the fixtures' Applications rather than stopping
+// the fake (the hub logs the error).
+func catalogSubscriptionIDs(url, branch string) func(context.Context) ([]string, error) {
+	var (
+		mu   sync.Mutex
+		repo *gitops.RepoWriter
+	)
+	return func(ctx context.Context) ([]string, error) {
+		mu.Lock()
+		if repo == nil {
+			opened, err := gitops.NewRepoWriter(ctx, gitops.RepoConfig{
+				URL: url, Branch: branch, AuthorName: "ai-grid-fake-infra", AuthorEmail: "fake-infra@localhost",
+			})
+			if err != nil {
+				mu.Unlock()
+				return nil, fmt.Errorf("open the catalog %s: %w", url, err)
+			}
+			repo = opened
+		}
+		mu.Unlock()
+		head, err := repo.Head(ctx)
+		if err != nil {
+			return nil, err
+		}
+		names, err := head.List(catalogSubscriptionsDir)
+		if err != nil {
+			return nil, err
+		}
+		ids := make([]string, 0, len(names))
+		for _, name := range names {
+			if id, ok := strings.CutSuffix(name, ".yaml"); ok {
+				ids = append(ids, id)
+			}
+		}
+		return ids, nil
+	}
 }

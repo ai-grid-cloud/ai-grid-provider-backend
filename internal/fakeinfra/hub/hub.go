@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -61,6 +62,9 @@ type Hub struct {
 	logger       *slog.Logger
 	// nodes are what the fake Search indexes (search.go).
 	nodes []SearchNode
+	// subscriptionIDs, when set, lists the catalog's subscription ids, so the
+	// Applications report generated names too (generatedResources).
+	subscriptionIDs func(context.Context) ([]string, error)
 }
 
 // Option configures a Hub.
@@ -69,6 +73,15 @@ type Option func(*Hub)
 // WithClock replaces time.Now, for tests. The scenario clock starts at the
 // clock's first reading.
 func WithClock(clock func() time.Time) Option { return func(h *Hub) { h.clock = clock } }
+
+// WithSubscriptionIDs lists the subscriptions in the catalog the backend
+// writes to. With it, each Application's status.resources also reports every
+// generated subscription name base-<suffix> (and its -policy) as the fixture
+// reports base (and base-policy), so a subscription created through the API
+// reads the fixture's status (applications.go, generatedResources).
+func WithSubscriptionIDs(list func(context.Context) ([]string, error)) Option {
+	return func(h *Hub) { h.subscriptionIDs = list }
+}
 
 // WithLogger sets the logger (default slog.Default()).
 func WithLogger(logger *slog.Logger) Option { return func(h *Hub) { h.logger = logger } }
