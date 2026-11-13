@@ -308,8 +308,9 @@ func logRequests(logger *slog.Logger, component string, next http.Handler) http.
 	})
 }
 
-// catalogSubscriptionsDir is where the backend writes subscriptions
-// (internal/servers, subscriptionsGitDir).
+// catalogSubscriptionsDir is where the backend writes subscriptions: keep it
+// equal to subscriptionsGitDir in internal/servers/subscriptions_git.go, which
+// is unexported.
 const catalogSubscriptionsDir = "catalog/subscriptions"
 
 // catalogSubscriptionIDs lists the subscription ids in branch of the catalog

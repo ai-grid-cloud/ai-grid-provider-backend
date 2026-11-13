@@ -1164,9 +1164,12 @@ make dev-catalog-reset                # delete the repository and start from the
 `site-paris-1`, not ready on `site-madrid-1`, and its `MaaSModelRef` ready on
 the ingress `site-ashburn-1`, and `status.clusters` has an entry for each of
 the two placed clusters. Any model name not in the fixtures shows `SavedToGit`. The
-subscription's final id is `team-a-<suffix>`; because the fixtures report the exact
-name `team-a` but not the generated id, the API-created subscription and policy stay
-`Pending` unless their fixture entries are retargeted to the returned final ids. On
+subscription's final id is `team-a-<suffix>`: the fake hub reads the catalog
+(`--catalog-git-url`, which `make dev-fake` passes) and reports each
+`team-a-<suffix>` subscription and its policy as the fixtures report `team-a` and
+`team-a-policy`. It fetches the catalog on every Applications read and sends no
+token, so in practice this works with the local `file://` catalog; with a remote or
+private `AI_GRID_GIT_URL`, generated names stay `Pending`. On
 `make dev-fake-poc`, place `granite-3b` on `site1` and `site2` instead:
 `fixtures/poc/policies.json` reports it the same way. `team-a`'s model ref
 reads back joined to the model: `namespace` `models-as-a-service`,
