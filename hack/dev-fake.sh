@@ -72,6 +72,8 @@ fi
   --keycloak-address "$DEV_HOST:$DEV_KEYCLOAK_PORT" \
   --draft-address "$DEV_DRAFT_ADDRESS" \
   --draft-fixtures "$DEV_DRAFT_FIXTURES" \
+  --catalog-git-url "$AI_GRID_GIT_URL" \
+  --catalog-git-branch "${AI_GRID_GIT_BRANCH:-main}" \
   --kubeconfig-out "$DEV_KUBECONFIG" \
   --hub-ca-out "$DEV_HUB_CA" \
   --keycloak-admin-realm "$KC_ADMIN_REALM" \
